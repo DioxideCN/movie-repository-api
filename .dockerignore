@@ -1,0 +1,9 @@
+.venv
+tests
+saves
+logs
+
+*.log
+*.logs
+
+README.md

@@ -1,0 +1,147 @@
+{
+    "code": 0,
+    "data": {
+        "has_next": 1,
+        "list": [
+            {
+                "badge": "\u4f1a\u5458\u4e13\u4eab",
+                "badge_info": {
+                    "bg_color": "#FB7299",
+                    "bg_color_night": "#BB5B76",
+                    "text": "\u4f1a\u5458\u4e13\u4eab"
+                },
+                "badge_type": 0,
+                "cover": "http://i0.hdslb.com/bfs/bangumi/image/32a08ede8cdcf941b0a2d2ceddd6c1b991c64699.png",
+                "first_ep": {
+                    "cover": "http://i0.hdslb.com/bfs/bangumi/ce7cfea13b30032c55f00609d3c997343b961bb6.jpg",
+                    "ep_id": 402380
+                },
+                "index_show": "2021\u5e743\u670818\u65e5\u4e0a\u6620",
+                "is_finish": 1,
+                "link": "https://www.bilibili.com/bangumi/play/ss38552?theme=movie",
+                "media_id": 28234241,
+                "order": "7809.6\u4e07\u6b21\u64ad\u653e",
+                "order_type": "2",
+                "score": "9.8",
+                "season_id": 38552,
+                "season_status": 13,
+                "season_type": 2,
+                "subTitle": "\u6700\u5168DC\u5b87\u5b99\u9635\u5bb9\u96c6\u7ed3\uff01",
+                "title": "\u6b63\u4e49\u8054\u76df\uff1a\u624e\u514b\u00b7\u65bd\u5948\u5fb7\u7248",
+                "title_icon": ""
+            },
+            {
+                "badge": "\u72ec\u5bb6",
+                "badge_info": {
+                    "bg_color": "#00C0FF",
+                    "bg_color_night": "#0B91BE",
+                    "text": "\u72ec\u5bb6"
+                },
+                "badge_type": 1,
+                "cover": "http://i0.hdslb.com/bfs/bangumi/image/c0bab4b14061be964f90a9a6e1d83149168b115f.png",
+                "first_ep": {
+                    "cover": "http://i0.hdslb.com/bfs/archive/4a5d8588f195e9c7c556ccb0a5e38388214c90d0.jpg",
+                    "ep_id": 517848
+                },
+                "index_show": "2022\u5e746\u670823\u65e5\u4e0a\u6620",
+                "is_finish": 0,
+                "link": "https://www.bilibili.com/bangumi/play/ss41936?theme=movie",
+                "media_id": 28338126,
+                "order": "7690.6\u4e07\u6b21\u64ad\u653e",
+                "order_type": "2",
+                "score": "",
+                "season_id": 41936,
+                "season_status": 13,
+                "season_type": 2,
+                "subTitle": "\u7535\u5f71\u4f1a\u6b7b\u5417\uff1f",
+                "title": "\u5927\u4e16\u754c\u626d\u86cb\u673a \u00b7 \u7279\u522b\u7bc7\uff1a\u660e\u65e5\u4e4b\u540e",
+                "title_icon": ""
+            },
+            {
+                "badge": "\u72ec\u5bb6",
+                "badge_info": {
+                    "bg_color": "#00C0FF",
+                    "bg_color_night": "#0B91BE",
+                    "text": "\u72ec\u5bb6"
+                },
+                "badge_type": 1,
+                "cover": "http://i0.hdslb.com/bfs/bangumi/image/98a63ec80db80d9cc4f0ec6c0ae0189743de2639.png",
+                "first_ep": {
+                    "cover": "http://i0.hdslb.com/bfs/archive/2f367f52ff180cacb5666f8568e46e9d5a09d478.jpg",
+                    "ep_id": 384789
+                },
+                "index_show": "2020\u5e7412\u670831\u65e5\u4e0a\u6620",
+                "is_finish": 1,
+                "link": "https://www.bilibili.com/bangumi/play/ss37947?theme=movie",
+                "media_id": 28233626,
+                "order": "7531.4\u4e07\u6b21\u64ad\u653e",
+                "order_type": "2",
+                "score": "8.0",
+                "season_id": 37947,
+                "season_status": 8,
+                "season_type": 2,
+                "subTitle": "B\u7ad9\u72ec\u64ad \u7b11\u7206\u65b0\u6625",
+                "title": "\u6e29\u6696\u7684\u62b1\u62b1",
+                "title_icon": ""
+            },
+            {
+                "badge": "\u4f1a\u5458\u4e13\u4eab",
+                "badge_info": {
+                    "bg_color": "#FB7299",
+                    "bg_color_night": "#BB5B76",
+                    "text": "\u4f1a\u5458\u4e13\u4eab"
+                },
+                "badge_type": 0,
+                "cover": "http://i0.hdslb.com/bfs/bangumi/image/33680a2209c4dba76322b2ffeeaf3dd821db576c.png",
+                "first_ep": {
+                    "cover": "http://i0.hdslb.com/bfs/archive/f98378aca49f68ef124ae3c710dc3a510a162065.png",
+                    "ep_id": 332611
+                },
+                "index_show": "2019\u5e7411\u67081\u65e5\u4e0a\u6620",
+                "is_finish": 1,
+                "link": "https://www.bilibili.com/bangumi/play/ss33343?theme=movie",
+                "media_id": 28228734,
+                "order": "6816\u4e07\u6b21\u64ad\u653e",
+                "order_type": "2",
+                "score": "9.6",
+                "season_id": 33343,
+                "season_status": 13,
+                "season_type": 2,
+                "subTitle": "\u73b0\u5728\u8d77\u8981\u653e\u6674\u4e86\uff01",
+                "title": "\u5929\u6c14\u4e4b\u5b50",
+                "title_icon": ""
+            },
+            {
+                "badge": "\u4f1a\u5458\u4e13\u4eab",
+                "badge_info": {
+                    "bg_color": "#FB7299",
+                    "bg_color_night": "#BB5B76",
+                    "text": "\u4f1a\u5458\u4e13\u4eab"
+                },
+                "badge_type": 0,
+                "cover": "http://i0.hdslb.com/bfs/bangumi/5bee2f7688f4264c6cdbb983aec0205b6b7c9d3b.jpg",
+                "first_ep": {
+                    "cover": "http://i0.hdslb.com/bfs/archive/70852cd9e733c0ba5ce9f69a1bc60dd14a72dda0.jpg",
+                    "ep_id": 287966
+                },
+                "index_show": "2019\u5e749\u67087\u65e5\u4e0a\u6620",
+                "is_finish": 1,
+                "link": "https://www.bilibili.com/bangumi/play/ss28198?theme=movie",
+                "media_id": 28221675,
+                "order": "6791\u4e07\u6b21\u64ad\u653e",
+                "order_type": "2",
+                "score": "9.9",
+                "season_id": 28198,
+                "season_status": 13,
+                "season_type": 2,
+                "subTitle": "\u5c0f\u9ed1\u6765\u4e86\uff0c\u55b5\uff01",
+                "title": "\u7f57\u5c0f\u9ed1\u6218\u8bb0",
+                "title_icon": ""
+            }
+        ],
+        "num": 2,
+        "size": 5,
+        "total": 5497
+    },
+    "message": "success"
+}
