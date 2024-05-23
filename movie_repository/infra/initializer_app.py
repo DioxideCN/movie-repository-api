@@ -4,8 +4,8 @@ from movie_repository.util.logger import logger
 from .initializer_config import init_configuration
 from .initializer_db import init_database
 
-TOTAL = int(os.getenv("total", "100"))
-PAGE_SIZE = int(os.getenv("page-size", "10"))
+TOTAL = int(os.getenv("total", "60"))
+PAGE_SIZE = int(os.getenv("page-size", "30"))
 
 
 def init_app():
@@ -16,6 +16,6 @@ def init_app():
     init_configuration()
     # Step2.初始化并载入mongodb
     logger.info('Initializing mongo db...')
-    init_database()
+    init_database(TOTAL, PAGE_SIZE)
     # Step3.启动fast api服务
     logger.info('Starting fast api server...')
