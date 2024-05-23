@@ -6,8 +6,9 @@
 
 ## Run on Local
 1. Use command `docker pull mongo` to pull the latest mongodb image from docker hub.
-2. Run your mongo image to docker container.
-3. Start this poetry project.
+2. Run your mongo image to docker container and expose it on port `27017`.
+3. Edit fast-api start configuration, add environment variables `total=10;page-size=5`.
+4. Start this poetry project on PyCharm.
 
 ## Contributions
 Contact with me on discord dioxide_cn or on QQ 1050177109. 
