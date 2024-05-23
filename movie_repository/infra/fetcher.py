@@ -1,17 +1,15 @@
 import asyncio
 import json
-import time
 import re
 from dataclasses import asdict
 
 import aiohttp
-import requests
 from lxml import etree
 from motor.motor_asyncio import AsyncIOMotorCollection
 
 from movie_repository.util.logger import logger
 from movie_repository.entity import MovieEntity
-from .initializer_config import write_in
+from .init_config import write_in
 
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -106,7 +104,7 @@ class Bilibili:
         documents = [asdict(movie) for movie in batch_result_bilibili]
         logger.info(f'[Batch {page}] Inserting bilibili data into mongodb')
         await collection.insert_many(documents)
-        await asyncio.sleep(0.5)  # QOS缓冲
+        await asyncio.sleep(1)  # QOS缓冲
         return documents
 
 

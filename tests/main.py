@@ -1,5 +1,11 @@
+import uuid
+from datetime import datetime
+
 import requests
 from lxml import etree
 
-for num in range(1, 2):
-    print(num)
+unique_id = str(uuid.uuid4())
+timestamp = int(datetime.now().timestamp())
+
+print(unique_id)
+print(timestamp)

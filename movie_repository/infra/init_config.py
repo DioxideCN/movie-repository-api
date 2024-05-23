@@ -37,5 +37,6 @@ def write_in(file_name: str, batch: int, data_set: any):
         raise ValueError(err_msg)
     file_path: str = os.path.join(saves_path, file_name, f'{file_name}_{batch}.json')
     logger.info(f"Writing data into 'saves/{file_name}/{file_name}_{batch}.json'.")
-    with open(file_path, 'w') as file:
+    with open(file_path, 'w', encoding='utf-8') as file:
         json.dump(data_set, file, indent=4)
+        file.close()
