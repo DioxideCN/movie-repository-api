@@ -14,7 +14,7 @@ if not os.path.exists(os.path.dirname(log_path)):
 
 # 配置日志器基本规则
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s %(levelname)-5s --- [ %(module)-18s ] %(funcName)-20s : %(message)s',
     handlers=[
         logging.FileHandler(log_path, encoding='utf-8'),  # 文件处理器，写入到指定的日志文件
