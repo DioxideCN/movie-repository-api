@@ -1,6 +1,5 @@
 import json
 import os
-from dataclasses import asdict
 
 from movie_repository.util.logger import logger
 
