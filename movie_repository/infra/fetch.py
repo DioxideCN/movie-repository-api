@@ -28,6 +28,12 @@ def safe_float_conversion(value, default=-1.0):
         return default
 
 
+def filter_strings(strings: [str]) -> [str]:
+    # 使用列表推导式过滤字符串
+    filtered_strings = [s for s in strings if s and "《" not in s and "》" not in s]
+    return filtered_strings
+
+
 # B站数据源
 class Bilibili:
     pagesize: int = 60
@@ -53,7 +59,7 @@ class Bilibili:
                 response_text = await response.text()
                 html = etree.HTML(response_text)
                 div_texts = html.xpath("//div[contains(text(), '出演演员')]//text()")
-                return ''.join(t.strip() for t in div_texts).removeprefix('出演演员：').split('\n')
+                return filter_strings(''.join(t.strip() for t in div_texts).removeprefix('出演演员：').split('\n'))
 
     @staticmethod
     async def handle_data(raw_film_data: any) -> list[MovieEntity]:
@@ -224,7 +230,7 @@ class Tencent:
                 intro=cover_info["description"],
                 score=score,
                 movie_type=[item["params"]["main_genre"]],
-                release_date=item['params']['publish_date'],
+                release_date=item['params']['epsode_pubtime'],
                 actors=[star["star_name"] for star in actor_list],
                 metadata={
                     'source': 'Tencent',
@@ -244,10 +250,29 @@ class Tencent:
                         collection: AsyncIOMotorCollection,
                         page: int) -> list[dict[str, any]]:
         logger.info(f'[Batch {page}] Fetching tencent data...')
+        # Batch Task Key
+        batch_task_id: str = generate_key('BATCH.TASK')
+        batch_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
+        # 缓存预热事件点
+        warmup.put_batch_trace(task_id=batch_task_id, source=Tencent.platform,
+                               batch=page, pagesize=30, status=Status.PENDING,
+                               begin=batch_begin_time)
         batch_result_tencent = await Tencent.raw_fetch_async(warmup, page)
+        warmup.put_batch_trace(task_id=batch_task_id, source=Tencent.platform,
+                               batch=page, pagesize=30, status=Status.FINISHED,
+                               begin=batch_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
         documents = [asdict(movie) for movie in batch_result_tencent]
         logger.info(f'[Batch {page}] Inserting tencent data into mongodb')
+        # DB Task Key
+        db_task_id: str = generate_key('DB.TASK')
+        db_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
+        warmup.put_db_trace(task_id=db_task_id, platform=Tencent.platform,
+                            batch=page, pagesize=30, status=Status.PENDING,
+                            begin=db_begin_time)
         await collection.insert_many(documents)
+        warmup.put_db_trace(task_id=db_task_id, platform=Tencent.platform,
+                            batch=page, pagesize=30, status=Status.FINISHED,
+                            begin=db_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
         await asyncio.sleep(0.5)  # QOS缓冲
         return documents
 
