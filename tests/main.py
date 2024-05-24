@@ -1,5 +1,7 @@
-import requests
-from lxml import etree
+from datetime import datetime
+from enum import Enum
 
-for num in range(0, 5):
-    print(num)
+
+time_formatter: str = '%Y-%m-%d %H:%M:%S,%f'
+
+print(datetime.now().strftime(time_formatter)[:-3])
