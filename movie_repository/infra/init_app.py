@@ -19,4 +19,3 @@ async def init_app():
     warmup = await init_database(TOTAL, PAGE_SIZE)
     logger.info('Saving warmup information...')
     warmup.save_to_file()
-
