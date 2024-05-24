@@ -1,11 +1,7 @@
-import uuid
 from datetime import datetime
+from enum import Enum
 
-import requests
-from lxml import etree
 
-unique_id = str(uuid.uuid4())
-timestamp = int(datetime.now().timestamp())
+time_formatter: str = '%Y-%m-%d %H:%M:%S,%f'
 
-print(unique_id)
-print(timestamp)
+print(datetime.now().strftime(time_formatter)[:-3])

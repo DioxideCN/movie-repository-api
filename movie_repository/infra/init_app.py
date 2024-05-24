@@ -16,4 +16,7 @@ async def init_app():
     init_configuration()
     # Step2.初始化并载入mongodb
     logger.info('Initializing mongo db...')
-    await init_database(TOTAL, PAGE_SIZE)
+    warmup = await init_database(TOTAL, PAGE_SIZE)
+    logger.info('Saving warmup information...')
+    warmup.save_to_file()
+

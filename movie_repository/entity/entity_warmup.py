@@ -1,11 +1,11 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
+from typing import Dict, Any, List
 
 
 @dataclass
 class SnapshotComponent:
     metadata: Dict[str, Any] = field(default_factory=dict)
-    trace: List[Any] = field(default_factory=list)
+    trace: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

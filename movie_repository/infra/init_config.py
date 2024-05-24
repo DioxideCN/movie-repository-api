@@ -1,15 +1,20 @@
 import json
 import os
+from datetime import datetime
 
 from movie_repository.util.logger import logger
+from .warmup import WarmupHandler, Status, generate_key
 
 
+time_formatter: str = '%Y-%m-%d %H%M%S.%f'
 saves_directory = "saves"
 saves_path = os.path.join(os.path.dirname(__file__), '..', '..', saves_directory)
 json_file: [str] = [
     'tencent',  # 腾讯
     'douban',   # 豆瓣
-    'bilibili',  # Bilibili
+    'bilibili',  # B站
+    'iqiyi',  # 爱奇艺
+    'youku',  # 优酷
 ]
 
 
@@ -26,7 +31,11 @@ def init_configuration():
             os.makedirs(directory_path)
 
 
-def write_in(file_name: str, batch: int, data_set: any):
+def write_in(warmup: WarmupHandler,
+             file_name: str,
+             batch: int,
+             pagesize: int,
+             data_set: any):
     if file_name not in json_file:  # 不存在的目标文件
         err_msg: str = f"Target file '{file_name}' doesn't exits in 'json_file' list."
         logger.error(err_msg)
@@ -35,8 +44,18 @@ def write_in(file_name: str, batch: int, data_set: any):
         err_msg: str = f"Batch file '{file_name}_{batch}.json' is illegal."
         logger.error(err_msg)
         raise ValueError(err_msg)
+    # File Task Key
+    file_task_id: str = generate_key('FILE.TASK')
+    file_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
+    # 缓存预热事件点
+    warmup.put_file_trace(task_id=file_task_id, directory=file_name,
+                          batch=batch, pagesize=pagesize, status=Status.PENDING,
+                          begin=file_begin_time)
     file_path: str = os.path.join(saves_path, file_name, f'{file_name}_{batch}.json')
     logger.info(f"Writing data into 'saves/{file_name}/{file_name}_{batch}.json'.")
     with open(file_path, 'w', encoding='utf-8') as file:
         json.dump(data_set, file, indent=4)
         file.close()
+        warmup.put_file_trace(task_id=file_task_id, directory=file_name,
+                              batch=batch, pagesize=pagesize, status=Status.FINISHED,
+                              begin=file_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
