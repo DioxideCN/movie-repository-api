@@ -6,7 +6,6 @@ from enum import Enum
 import yaml
 
 from movie_repository.entity import WarmupData
-from movie_repository.entity.entity_warmup import mask
 
 
 class Status(str, Enum):
