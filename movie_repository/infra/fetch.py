@@ -30,6 +30,7 @@ def safe_float_conversion(value, default=-1.0):
 
 # B站数据源
 class Bilibili:
+    pagesize: int = 60
     platform: str = 'bilibili'
     params = {
         'area': -1,
@@ -88,36 +89,34 @@ class Bilibili:
 
     @staticmethod
     async def raw_fetch_async(warmup: WarmupHandler,
-                              page: int,
-                              pagesize: int) -> list[MovieEntity]:
+                              page: int) -> list[MovieEntity]:
         Bilibili.params['page'] = page
-        Bilibili.params['pagesize'] = pagesize
+        Bilibili.params['pagesize'] = Bilibili.pagesize
         async with aiohttp.ClientSession() as session:
             async with session.get('https://api.bilibili.com/pgc/season/index/result',
                                    params=Bilibili.params,
                                    headers=headers) as response:
                 if response.status == 200:
                     json_object = await response.json()  # 解析数据
-                    write_in(warmup, Bilibili.platform, page, pagesize, json_object)  # 缓存到json
+                    write_in(warmup, Bilibili.platform, page, Bilibili.pagesize, json_object)  # 缓存到json
                     return await Bilibili.handle_data(json_object)
         return []
 
     @staticmethod
     async def run_async(warmup: WarmupHandler,
                         collection: AsyncIOMotorCollection,
-                        page: int,
-                        page_size: int) -> list[dict[str, any]]:
+                        page: int) -> list[dict[str, any]]:
         logger.info(f'[Batch {page}] Fetching bilibili data...')
         # Batch Task Key
         batch_task_id: str = generate_key('BATCH.TASK')
         batch_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
         # 缓存预热事件点
         warmup.put_batch_trace(task_id=batch_task_id, source=Bilibili.platform,
-                               batch=page, pagesize=page_size, status=Status.PENDING,
+                               batch=page, pagesize=Bilibili.pagesize, status=Status.PENDING,
                                begin=batch_begin_time)
-        batch_result_bilibili = await Bilibili.raw_fetch_async(warmup, page, page_size)
+        batch_result_bilibili = await Bilibili.raw_fetch_async(warmup, page)
         warmup.put_batch_trace(task_id=batch_task_id, source=Bilibili.platform,
-                               batch=page, pagesize=page_size, status=Status.FINISHED,
+                               batch=page, pagesize=Bilibili.pagesize, status=Status.FINISHED,
                                begin=batch_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
         documents = [asdict(movie) for movie in batch_result_bilibili]
         logger.info(f'[Batch {page}] Inserting bilibili data into mongodb')
@@ -125,11 +124,11 @@ class Bilibili:
         db_task_id: str = generate_key('DB.TASK')
         db_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
         warmup.put_db_trace(task_id=db_task_id, platform=Bilibili.platform,
-                            batch=page, pagesize=page_size, status=Status.PENDING,
+                            batch=page, pagesize=Bilibili.pagesize, status=Status.PENDING,
                             begin=db_begin_time)
         await collection.insert_many(documents)
         warmup.put_db_trace(task_id=db_task_id, platform=Bilibili.platform,
-                            batch=page, pagesize=page_size, status=Status.FINISHED,
+                            batch=page, pagesize=Bilibili.pagesize, status=Status.FINISHED,
                             begin=db_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
         await asyncio.sleep(1)  # QOS缓冲
         return documents
@@ -137,6 +136,7 @@ class Bilibili:
 
 # 腾讯数据源
 class Tencent:
+    pagesize: int = 30
     platform: str = 'tencent'
     base_url: str = "https://pbaccess.video.qq.com/trpc.vector_layout.page_view.PageService/getPage?video_appid=3000010"
     cover_url: str = "https://v.qq.com/x/cover/{cid}.html"
@@ -254,14 +254,17 @@ class Tencent:
 
 # 爱奇艺数据源
 class IQiYi:
+    pagesize: int = 24
     platform: str = 'iqiyi'
-
-
-# 豆瓣数据源
-class DouBan:
-    platform: str = 'douban'
 
 
 # 优酷数据源
 class YouKu:
+    pagesize: int = 60
     platform: str = 'youku'
+
+
+# 豆瓣数据源
+class DouBan:
+    pagesize: int = 60
+    platform: str = 'douban'
