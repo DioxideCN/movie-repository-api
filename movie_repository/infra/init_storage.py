@@ -34,8 +34,9 @@ async def init_database(total: int) -> WarmupHandler:
         为什么如此伟大的Python不支持从平台线程栈的角度去构造纤程呢
         非要把一个并发的高级概念卑微地分配在一个loop循环里面，逆天
         '''
-        tasks.append(fetch.Bilibili.run_async(warmup, COLLECTIONS, page, page_size))
+        tasks.append(fetch.Bilibili.run_async(warmup, COLLECTIONS, page))
         tasks.append(fetch.Tencent.run_async(warmup, COLLECTIONS, page))
+        tasks.append(fetch.IQiYi.run_async(warmup, COLLECTIONS, page))
     await asyncio.gather(*tasks)
     return warmup
 

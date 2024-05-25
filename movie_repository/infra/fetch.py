@@ -3,6 +3,7 @@ import json
 import re
 from dataclasses import asdict
 from datetime import datetime
+from typing import Callable, Awaitable
 
 import aiohttp
 from lxml import etree
@@ -34,10 +35,46 @@ def filter_strings(strings: [str]) -> [str]:
     return filtered_strings
 
 
+async def abstract_run_with_checkpoint(platform: str,
+                                       collection: AsyncIOMotorCollection,
+                                       page: int,
+                                       pagesize: int,
+                                       warmup: WarmupHandler,
+                                       async_func: Callable[[], Awaitable[list[MovieEntity]]]) -> list[dict[str, any]]:
+    logger.info(f'[Batch {page}] Fetching {platform} data...')
+    # Batch Task Key
+    batch_task_id: str = generate_key('BATCH.TASK')
+    batch_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
+    # 缓存预热事件点
+    warmup.put_batch_trace(task_id=batch_task_id, source=platform,
+                           batch=page, pagesize=pagesize, status=Status.PENDING,
+                           begin=batch_begin_time)
+    batch_results = await async_func()
+    warmup.put_batch_trace(task_id=batch_task_id, source=platform,
+                           batch=page, pagesize=pagesize, status=Status.FINISHED,
+                           begin=batch_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
+    documents = [asdict(movie) for movie in batch_results]
+    logger.info(f'[Batch {page}] Inserting {platform} data into mongodb')
+    # DB Task Key
+    db_task_id: str = generate_key('DB.TASK')
+    db_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
+    warmup.put_db_trace(task_id=db_task_id, platform=platform,
+                        batch=page, pagesize=pagesize, status=Status.PENDING,
+                        begin=db_begin_time)
+    await collection.insert_many(documents)
+    warmup.put_db_trace(task_id=db_task_id, platform=platform,
+                        batch=page, pagesize=pagesize, status=Status.FINISHED,
+                        begin=db_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
+    await asyncio.sleep(1)  # QOS缓冲
+    return documents
+
+
 # B站数据源
 class Bilibili:
     pagesize: int = 60
     platform: str = 'bilibili'
+    base_url: str = 'https://api.bilibili.com/pgc/season/index/result'
+    actors_url: str = 'https://www.bilibili.com/bangumi/play/ep'
     params = {
         'area': -1,
         'style_id': -1,
@@ -55,7 +92,7 @@ class Bilibili:
     @staticmethod
     async def fetch_actors(ep_id: str) -> list[str]:
         async with aiohttp.ClientSession() as session:
-            async with session.get(f'https://www.bilibili.com/bangumi/play/ep{ep_id}', headers=headers) as response:
+            async with session.get(f'{Bilibili.actors_url}{ep_id}', headers=headers) as response:
                 response_text = await response.text()
                 html = etree.HTML(response_text)
                 div_texts = html.xpath("//div[contains(text(), '出演演员')]//text()")
@@ -99,7 +136,7 @@ class Bilibili:
         Bilibili.params['page'] = page
         Bilibili.params['pagesize'] = Bilibili.pagesize
         async with aiohttp.ClientSession() as session:
-            async with session.get('https://api.bilibili.com/pgc/season/index/result',
+            async with session.get(Bilibili.base_url,
                                    params=Bilibili.params,
                                    headers=headers) as response:
                 if response.status == 200:
@@ -112,40 +149,20 @@ class Bilibili:
     async def run_async(warmup: WarmupHandler,
                         collection: AsyncIOMotorCollection,
                         page: int) -> list[dict[str, any]]:
-        logger.info(f'[Batch {page}] Fetching bilibili data...')
-        # Batch Task Key
-        batch_task_id: str = generate_key('BATCH.TASK')
-        batch_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
-        # 缓存预热事件点
-        warmup.put_batch_trace(task_id=batch_task_id, source=Bilibili.platform,
-                               batch=page, pagesize=Bilibili.pagesize, status=Status.PENDING,
-                               begin=batch_begin_time)
-        batch_result_bilibili = await Bilibili.raw_fetch_async(warmup, page)
-        warmup.put_batch_trace(task_id=batch_task_id, source=Bilibili.platform,
-                               batch=page, pagesize=Bilibili.pagesize, status=Status.FINISHED,
-                               begin=batch_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
-        documents = [asdict(movie) for movie in batch_result_bilibili]
-        logger.info(f'[Batch {page}] Inserting bilibili data into mongodb')
-        # DB Task Key
-        db_task_id: str = generate_key('DB.TASK')
-        db_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
-        warmup.put_db_trace(task_id=db_task_id, platform=Bilibili.platform,
-                            batch=page, pagesize=Bilibili.pagesize, status=Status.PENDING,
-                            begin=db_begin_time)
-        await collection.insert_many(documents)
-        warmup.put_db_trace(task_id=db_task_id, platform=Bilibili.platform,
-                            batch=page, pagesize=Bilibili.pagesize, status=Status.FINISHED,
-                            begin=db_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
-        await asyncio.sleep(1)  # QOS缓冲
-        return documents
+        return await abstract_run_with_checkpoint(Bilibili.platform,
+                                                  collection,
+                                                  page,
+                                                  Bilibili.pagesize,
+                                                  warmup,
+                                                  lambda: Bilibili.raw_fetch_async(warmup, page))
 
 
 # 腾讯数据源
 class Tencent:
     pagesize: int = 30
     platform: str = 'tencent'
-    base_url: str = "https://pbaccess.video.qq.com/trpc.vector_layout.page_view.PageService/getPage?video_appid=3000010"
-    cover_url: str = "https://v.qq.com/x/cover/{cid}.html"
+    base_url: str = 'https://pbaccess.video.qq.com/trpc.vector_layout.page_view.PageService/getPage?video_appid=3000010'
+    cover_url: str = 'https://v.qq.com/x/cover/{cid}.html'
     payload: dict[str: any] = {
         "page_context": {
             "page_index": "1"
@@ -249,47 +266,89 @@ class Tencent:
     async def run_async(warmup: WarmupHandler,
                         collection: AsyncIOMotorCollection,
                         page: int) -> list[dict[str, any]]:
-        logger.info(f'[Batch {page}] Fetching tencent data...')
-        # Batch Task Key
-        batch_task_id: str = generate_key('BATCH.TASK')
-        batch_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
-        # 缓存预热事件点
-        warmup.put_batch_trace(task_id=batch_task_id, source=Tencent.platform,
-                               batch=page, pagesize=30, status=Status.PENDING,
-                               begin=batch_begin_time)
-        batch_result_tencent = await Tencent.raw_fetch_async(warmup, page)
-        warmup.put_batch_trace(task_id=batch_task_id, source=Tencent.platform,
-                               batch=page, pagesize=30, status=Status.FINISHED,
-                               begin=batch_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
-        documents = [asdict(movie) for movie in batch_result_tencent]
-        logger.info(f'[Batch {page}] Inserting tencent data into mongodb')
-        # DB Task Key
-        db_task_id: str = generate_key('DB.TASK')
-        db_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
-        warmup.put_db_trace(task_id=db_task_id, platform=Tencent.platform,
-                            batch=page, pagesize=30, status=Status.PENDING,
-                            begin=db_begin_time)
-        await collection.insert_many(documents)
-        warmup.put_db_trace(task_id=db_task_id, platform=Tencent.platform,
-                            batch=page, pagesize=30, status=Status.FINISHED,
-                            begin=db_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
-        await asyncio.sleep(0.5)  # QOS缓冲
-        return documents
+        return await abstract_run_with_checkpoint(Tencent.platform,
+                                                  collection,
+                                                  page,
+                                                  Tencent.pagesize,
+                                                  warmup,
+                                                  lambda: Tencent.raw_fetch_async(warmup, page))
 
 
 # 爱奇艺数据源
 class IQiYi:
     pagesize: int = 24
     platform: str = 'iqiyi'
+    base_url = 'https://mesh.if.iqiyi.com/portal/lw/videolib/data'
+    params: dict[str, str] = {
+        "ret_num": "60",
+        "channel_id": "1",
+        "page_id": "0"  # 默认从0开始
+    }
+
+    @staticmethod
+    async def raw_fetch_async(warmup: WarmupHandler, page: int = 0) -> list[MovieEntity]:
+        async with aiohttp.ClientSession() as session:
+            IQiYi.params['page_id'] = str(page)
+            async with session.get(IQiYi.base_url, params=IQiYi.params) as response:
+                json_object = await response.json()  # 直接获取JSON
+                write_in(warmup, IQiYi.platform, page, 30, json_object)  # 缓存到json
+                result: list[MovieEntity] = []
+                results = json_object["data"]
+                for data in results:
+                    result.append(
+                        MovieEntity(
+                            title=data['title'],
+                            cover_url=data['album_image_url_hover'],
+                            directors=[x['name'] for x in data['creator']],
+                            actors=[x['name'] for x in data['contributor']],
+                            release_date=f'{data["date"]["year"]}-{data["date"]["month"]}-{data["date"]["day"]}',
+                            intro=data['description'],
+                            score=safe_float_conversion(data.get('sns_score', '')),
+                            movie_type=str(data.get('tag', '')).split(';'),
+                            metadata={
+                                'source': 'iQiYi',
+                                'uploader_id': data['uploader_id'],
+                                'batch_order': data['order'],
+                                'entity_id': data['entity_id'],
+                                'album_id': data['album_id'],
+                                'tv_id': data['tv_id'],
+                            },
+                        )
+                    )
+                return result
+
+    @staticmethod
+    async def run_async(warmup: WarmupHandler,
+                        collection: AsyncIOMotorCollection,
+                        page: int) -> list[dict[str, any]]:
+        return await abstract_run_with_checkpoint(IQiYi.platform,
+                                                  collection,
+                                                  page,
+                                                  IQiYi.pagesize,
+                                                  warmup,
+                                                  lambda: IQiYi.raw_fetch_async(warmup, page))
 
 
 # 优酷数据源
 class YouKu:
     pagesize: int = 60
     platform: str = 'youku'
+    base_url: str = 'https://www.youku.com/category/data'
+    params: dict[str, str] = {
+        "session": '{"subIndex":24,"trackInfo":{"parentdrawerid":"34441"},"spmA":"a2h05","level":2,"spmC":"drawer2",'
+                   '"spmB":"8165803_SHAIXUAN_ALL","index":1,"pageName":"page_channelmain_SHAIXUAN_ALL",'
+                   '"scene":"search_component_paging","scmB":"manual","path":"EP557352,EP557350,EP557347,EP557346,'
+                   'EP557345","scmA":"20140719","scmC":"34441","from":"SHAIXUAN","id":227939,"category":"电影"}',
+        "params": '{"type":"电影"}',
+        "pageNo": "1"  # 默认从1开始
+    }
+    youku_headers = {
+        "Referer": "https://www.youku.com/category/show/type_%E7%94%B5%E5%BD%B1.html",
+    }
 
 
 # 豆瓣数据源
 class DouBan:
     pagesize: int = 60
     platform: str = 'douban'
+    base_url: str = "https://mesh.if.iqiyi.com/portal/lw/videolib/data?ret_num=60&channel_id=1&page_id={PAGE_ID}"
