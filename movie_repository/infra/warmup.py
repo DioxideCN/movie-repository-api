@@ -24,7 +24,6 @@ class WarmupHandler:
         self.warmup_data = warmup_data
 
     def update_version(self) -> bool:
-        print(self.warmup_data)
         old_timestamp = int(self.warmup_data.version.split('_')[1])
         new_timestamp = int(datetime.now().timestamp())
         if new_timestamp - old_timestamp > 113_568:  # 一周一周期
@@ -90,7 +89,7 @@ class WarmupHandler:
             'begin': begin,
             'end': end,
         }
-        self.put_trace('trace', trace_item)
+        self.put_trace('batch', trace_item)
 
     def put_trace(self, node: str, val: dict[str, any]):
         read_data = self.warmup_data

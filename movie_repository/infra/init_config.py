@@ -58,4 +58,4 @@ def write_in(warmup: WarmupHandler,
         file.close()
         warmup.put_file_trace(task_id=file_task_id, directory=file_name,
                               batch=batch, pagesize=pagesize, status=Status.FINISHED,
-                              begin=file_begin_time, end=datetime.now().strftime(time_formatter)[:-3])
+                              begin=file_begin_time, end=datetime.now().strftime(time_formatter))
