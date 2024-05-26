@@ -1,58 +1,57 @@
-import asyncio
-
-import aiohttp
-
-from movie_repository.entity import MovieEntity
+from dataclasses import dataclass, field, fields, is_dataclass
+from typing import Dict, Any, List
 
 
-def safe_float_conversion(value, default=-1.0):
-    """尝试将给定的值转换为浮点数，如果失败则返回默认值"""
-    try:
-        return float(value)
-    except ValueError:
-        return default
+def mask(v, dataclass_type):
+    if isinstance(v, dict):
+        # 准备接收转换后的字段
+        field_values = {}
+        for field_name, field_type in dataclass_type.__annotations__.items():
+            field_value = v.get(field_name, None)
+            if is_dataclass(field_type):
+                # 如果字段类型也是数据类，则递归调用 mask
+                field_values[field_name] = mask(field_value, field_type)
+            else:
+                field_values[field_name] = field_value
+        return dataclass_type(**field_values)
+    return v
 
 
-class IQiYi:
-    pagesize: int = 24
-    platform: str = 'iqiyi'
-    base_url = 'https://mesh.if.iqiyi.com/portal/lw/videolib/data'
-    params: dict[str, str] = {
-        "ret_num": "60",
-        "channel_id": "1",
-        "page_id": "0"  # 默认从0开始
+def demo(cls):
+    print(cls.__name__.lower())
+    return cls
+
+
+@demo
+# 数据类定义，保持不变
+@dataclass
+class SnapshotComponent:
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    trace: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class Snapshot:
+    file: SnapshotComponent = field(default_factory=SnapshotComponent)
+    db: SnapshotComponent = field(default_factory=SnapshotComponent)
+    batch: SnapshotComponent = field(default_factory=SnapshotComponent)
+
+
+@dataclass
+class WarmupData:
+    version: str
+    snapshot: Snapshot = field(default_factory=Snapshot)
+
+
+# 测试用例
+data_dict = {
+    "version": "1.0",
+    "snapshot": {
+        "file": {"metadata": {"path": "/tmp"}, "trace": [{"time": "now"}]},
+        "db": {"metadata": {}, "trace": []},
+        "batch": {"metadata": {}, "trace": []}
     }
+}
 
-    @staticmethod
-    async def get_movies(page: int = 0) -> list[MovieEntity]:
-        async with aiohttp.ClientSession() as session:
-            IQiYi.params['page_id'] = str(page)
-            async with session.get(IQiYi.base_url, params=IQiYi.params) as response:
-                json_object = await response.json()  # 直接获取JSON
-                result: list[MovieEntity] = []
-                results = json_object["data"]
-                for data in results:
-                    result.append(
-                        MovieEntity(
-                            title=data["title"],
-                            cover_url=data["album_image_url_hover"],
-                            directors=[x["name"] for x in data["creator"]],
-                            actors=[x["name"] for x in data["contributor"]],
-                            release_date=f'{data["date"]["year"]}-{data["date"]["month"]}-{data["date"]["day"]}',
-                            intro=data["description"],
-                            score=safe_float_conversion(data.get("sns_score", 0.0)),
-                            movie_type=data.get("tag", ""),
-                            metadata=data,
-                        )
-                    )
-                return result
-
-
-# 假设 get_movies 已经定义并且准备好使用
-async def main():
-    movies = await IQiYi.get_movies()  # 调用异步函数并传递参数
-    print(movies[0])  # 打印结果
-
-# 运行主函数
-if __name__ == "__main__":
-    asyncio.run(main())
+warmup_data = mask(data_dict, WarmupData)
+print(warmup_data)

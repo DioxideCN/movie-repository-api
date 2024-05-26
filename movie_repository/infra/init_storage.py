@@ -1,4 +1,3 @@
-import asyncio
 import os
 import uuid
 from dataclasses import asdict
@@ -7,41 +6,27 @@ from datetime import datetime
 import yaml
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
-from . import fetch
+
 from . import init_config
+from .fetch import run_all
 from .warmup import WarmupHandler
 from movie_repository.util.logger import logger
 from movie_repository.entity.entity_warmup import WarmupData
 from movie_repository.entity.entity_warmup import mask
+from movie_repository.entity.entity_movie import MovieEntityV2
 
 CLIENT = AsyncIOMotorClient("mongodb://localhost:27017/")  # 端
 DB = CLIENT["movie_repository"]  # 库
-COLLECTIONS: AsyncIOMotorCollection = DB["movie_collection"]  # 表
+COLLECTIONS: AsyncIOMotorCollection = DB[MovieEntityV2.collection]  # 表
 WARMUP_PATH: str = os.path.join(init_config.saves_path, 'warmup.yaml')
 
 
 async def init_database(total: int) -> WarmupHandler:
-    """
-    从bilibili, tencent, douban平台获取电影信息
-    并存入mongodb数据库的movie_collection数据表中
-    """
-    batch: int = total // page_size  # 总子任务数
-    warmup: WarmupHandler = warmup_system()  # 预热系统数据
-    '''爬取数据应通过异步执行，通过TOTAL和PAGE_SIZE来切分子任务'''
-    tasks = []
-    for page in range(1, batch + 1):
-        '''
-        为什么如此伟大的Python不支持从平台线程栈的角度去构造纤程呢
-        非要把一个并发的高级概念卑微地分配在一个loop循环里面，逆天
-        '''
-        tasks.append(fetch.Bilibili.run_async(warmup, COLLECTIONS, page))
-        tasks.append(fetch.Tencent.run_async(warmup, COLLECTIONS, page))
-        tasks.append(fetch.IQiYi.run_async(warmup, COLLECTIONS, page))
-    await asyncio.gather(*tasks)
+    warmup: WarmupHandler = await warmup_system(total)  # 预热系统数据
     return warmup
 
 
-def warmup_system() -> WarmupHandler:
+async def warmup_system(total: int) -> WarmupHandler:
     """
     从已有的Saves中定位状态和时间版本来决定这次是否要重新爬取数据
     计划使用warmup.yaml配置来实时更新配置状态，并决策爬取新数据
@@ -56,16 +41,26 @@ def warmup_system() -> WarmupHandler:
             default_warmup = WarmupData(f"{unique_id}_{timestamp}")
             yaml.dump(asdict(default_warmup), file)
             file.close()
-        return WarmupHandler(path=WARMUP_PATH, warmup_data=default_warmup)
+        return WarmupHandler(warmup_data=default_warmup, path=WARMUP_PATH)
     logger.info(f"Reading warmup configuration to restore current system.")
     with open(WARMUP_PATH, 'r', encoding='utf-8') as file:
         warmup_data: dict = yaml.safe_load(file)
         read_data: WarmupData = mask(warmup_data, WarmupData)
         file.close()
-    return figure_out_warmup(read_data)
+    return await figure_out_warmup(read_data, total)
 
 
-def figure_out_warmup(warmup: WarmupData) -> WarmupHandler:
-    instance: WarmupHandler = WarmupHandler(path=WARMUP_PATH, warmup_data=warmup)
-    instance.update_version()  # 调用版本更新
+async def figure_out_warmup(warmup: WarmupData, total: int) -> WarmupHandler:
+    instance: WarmupHandler = WarmupHandler(warmup_data=warmup, path=WARMUP_PATH)
+    if instance.update_version():
+        # 尝试版本更新
+        logger.info('Warmup system version has been updated.')
+        '''
+        为什么如此伟大的Python不支持从平台线程栈的角度去构造纤程呢
+        非要把一个并发的高级概念卑微地分配在一个loop循环里面，逆天
+        '''
+        await run_all(instance, COLLECTIONS, total)  # 只有发生版本更新才要启动重新拉取的任务
+    else:
+        # 检查PENDING或ERROR任务
+        await instance.try_rollback(COLLECTIONS)
     return instance
