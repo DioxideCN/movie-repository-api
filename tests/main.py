@@ -17,6 +17,12 @@ def mask(v, dataclass_type):
     return v
 
 
+def demo(cls):
+    print(cls.__name__.lower())
+    return cls
+
+
+@demo
 # 数据类定义，保持不变
 @dataclass
 class SnapshotComponent:

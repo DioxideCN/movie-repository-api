@@ -35,7 +35,8 @@ def write_in(warmup: WarmupHandler,
              file_name: str,
              batch: int,
              pagesize: int,
-             data_set: any):
+             data_set: any,
+             retry_on_task_id: str = ''):
     if file_name not in json_file:  # 不存在的目标文件
         err_msg: str = f"Target file '{file_name}' doesn't exits in 'json_file' list."
         logger.error(err_msg)
@@ -45,7 +46,7 @@ def write_in(warmup: WarmupHandler,
         logger.error(err_msg)
         raise ValueError(err_msg)
     # File Task Key
-    file_task_id: str = generate_key('FILE.TASK')
+    file_task_id: str = retry_on_task_id if retry_on_task_id.startswith('FILE.TASK') else generate_key('FILE.TASK')
     file_begin_time: str = datetime.now().strftime(time_formatter)[:-3]
     # 缓存预热事件点
     warmup.put_file_trace(task_id=file_task_id, directory=file_name,

@@ -41,7 +41,7 @@ async def warmup_system(total: int) -> WarmupHandler:
             default_warmup = WarmupData(f"{unique_id}_{timestamp}")
             yaml.dump(asdict(default_warmup), file)
             file.close()
-        return WarmupHandler(path=WARMUP_PATH, warmup_data=default_warmup)
+        return WarmupHandler(warmup_data=default_warmup, path=WARMUP_PATH)
     logger.info(f"Reading warmup configuration to restore current system.")
     with open(WARMUP_PATH, 'r', encoding='utf-8') as file:
         warmup_data: dict = yaml.safe_load(file)
@@ -51,7 +51,7 @@ async def warmup_system(total: int) -> WarmupHandler:
 
 
 async def figure_out_warmup(warmup: WarmupData, total: int) -> WarmupHandler:
-    instance: WarmupHandler = WarmupHandler(path=WARMUP_PATH, warmup_data=warmup)
+    instance: WarmupHandler = WarmupHandler(warmup_data=warmup, path=WARMUP_PATH)
     if instance.update_version():
         # 尝试版本更新
         logger.info('Warmup system version has been updated.')
@@ -60,4 +60,7 @@ async def figure_out_warmup(warmup: WarmupData, total: int) -> WarmupHandler:
         非要把一个并发的高级概念卑微地分配在一个loop循环里面，逆天
         '''
         await run_all(instance, COLLECTIONS, total)  # 只有发生版本更新才要启动重新拉取的任务
+    else:
+        # 检查PENDING或ERROR任务
+        await instance.try_rollback(COLLECTIONS)
     return instance

@@ -1,11 +1,14 @@
 import uuid
+from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime
 from enum import Enum
 
 import yaml
+from motor.motor_asyncio import AsyncIOMotorCollection
 
 from movie_repository.entity import WarmupData
+from movie_repository.infra import fetch
 
 
 class Status(str, Enum):
@@ -19,7 +22,7 @@ def generate_key(prefix: str = 'TASK') -> str:
 
 
 class WarmupHandler:
-    def __init__(self, path: str = '', warmup_data: WarmupData = None):
+    def __init__(self, warmup_data: WarmupData, path: str = ''):
         self.path = path
         self.warmup_data = warmup_data
 
@@ -115,3 +118,15 @@ class WarmupHandler:
         # 将内存中的 warmup_data 写入文件
         with open(self.path, 'w', encoding='utf-8') as file:
             yaml.dump(asdict(self.warmup_data), file)
+
+    async def try_rollback(self, collection: AsyncIOMotorCollection):
+        # 尝试从PENDING和ERROR的检查点回滚数据
+        results = defaultdict(lambda: defaultdict(int))
+        for component_name in ['file', 'db', 'batch']:
+            component = getattr(self.warmup_data.snapshot, component_name)
+            for trace in component.trace:
+                if trace.get('status') != Status.FINISHED.value:
+                    platform = trace['source']
+                    task_id = trace['task_id']
+                    results[platform][task_id] = int(trace['batch'])
+        await fetch.rollback_all(self, collection, results)

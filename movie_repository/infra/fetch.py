@@ -1,7 +1,6 @@
 import asyncio
 import json
 import re
-from dataclasses import asdict
 from datetime import datetime
 from typing import Callable, Awaitable
 
@@ -16,11 +15,17 @@ from .warmup import WarmupHandler, Status, generate_key
 from movie_repository.util.default_util import StringUtil, TimeUtil, MongoUtil
 
 # 全局注册器
-class_registry = []
+_task_run_registry = []
+_rollback_run_registry = []
 
 
 def inject(cls):
-    class_registry.append(cls)
+    _task_run_registry.append(cls)
+    return cls
+
+
+def checkpoint_rollback(cls):
+    _rollback_run_registry.append(cls)
     return cls
 
 
@@ -28,10 +33,25 @@ async def run_all(warmup: WarmupHandler,
                   collection: AsyncIOMotorCollection,
                   total: int):
     tasks = []
-    for cls in class_registry:
+    for cls in _task_run_registry:
         batches = total // cls.pagesize
         for page in range(1, batches + 1):
             tasks.append(cls.run_async(warmup, collection, page))
+    await asyncio.gather(*tasks)
+
+
+async def rollback_all(warmup: WarmupHandler,
+                       collection: AsyncIOMotorCollection,
+                       rollback_trace: dict[str, dict[str, int]]):
+    tasks = []
+    for cls in _task_run_registry:
+        key: str = cls.__name__.lower()
+        if rollback_trace[key]:
+            for task_id in rollback_trace[key]:
+                # 从检点开始重试
+                batch: int = rollback_trace[key][task_id]
+                logger.info(f'Checkpoint Rollback -> found rollback checkpoint at {key} platform {batch} batch.')
+                tasks.append(cls.run_async(warmup, collection, batch, task_id))
     await asyncio.gather(*tasks)
 
 
@@ -60,11 +80,11 @@ async def abstract_run_with_checkpoint(platform: str,
                                        page: int,
                                        pagesize: int,
                                        warmup: WarmupHandler,
-                                       async_func: Callable[[], Awaitable[list[MovieEntityV2]]]
-                                       ):
+                                       async_func: Callable[[], Awaitable[list[MovieEntityV2]]],
+                                       retry_on_task_id: str = ''):
     logger.info(f'[Batch {page}] Fetching {platform} data...')
     # Batch Task Key
-    batch_task_id: str = generate_key('BATCH.TASK')
+    batch_task_id: str = retry_on_task_id if retry_on_task_id.startswith('BATCH.TASK') else generate_key('BATCH.TASK')
     batch_begin_time: str = TimeUtil.now()
     # 缓存预热事件点
     warmup.put_batch_trace(task_id=batch_task_id, source=platform,
@@ -76,7 +96,7 @@ async def abstract_run_with_checkpoint(platform: str,
                            begin=batch_begin_time, end=datetime.now().strftime(TimeUtil.now()))
     logger.info(f'[Batch {page}] Inserting {platform} data into mongodb')
     # DB Task Key
-    db_task_id: str = generate_key('DB.TASK')
+    db_task_id: str = retry_on_task_id if retry_on_task_id.startswith('DB.TASK') else generate_key('DB.TASK')
     db_begin_time: str = TimeUtil.now()
     warmup.put_db_trace(task_id=db_task_id, platform=platform,
                         batch=page, pagesize=pagesize, status=Status.PENDING,
@@ -88,7 +108,7 @@ async def abstract_run_with_checkpoint(platform: str,
     await asyncio.sleep(1)  # QOS缓冲
 
 
-# B站数据源 ~ 注入到任务容器
+# B站数据源 ~ 通过控制反转注入到任务容器
 @inject
 class Bilibili:
     pagesize: int = 60
@@ -160,7 +180,8 @@ class Bilibili:
 
     @staticmethod
     async def raw_fetch_async(warmup: WarmupHandler,
-                              page: int) -> list[MovieEntityV2]:
+                              page: int,
+                              retry_on_task_id: str = '') -> list[MovieEntityV2]:
         Bilibili.params['page'] = page
         Bilibili.params['pagesize'] = Bilibili.pagesize
         async with aiohttp.ClientSession() as session:
@@ -169,23 +190,26 @@ class Bilibili:
                                    headers=headers) as response:
                 if response.status == 200:
                     json_object = await response.json()  # 解析数据
-                    write_in(warmup, Bilibili.platform, page, Bilibili.pagesize, json_object)  # 缓存到json
+                    # 缓存到json
+                    write_in(warmup, Bilibili.platform, page, Bilibili.pagesize, json_object, retry_on_task_id)
                     return await Bilibili.handle_data(json_object)
         return []
 
     @staticmethod
     async def run_async(warmup: WarmupHandler,
                         collection: AsyncIOMotorCollection,
-                        page: int):
+                        page: int,
+                        retry_on_task_id: str = ''):
         await abstract_run_with_checkpoint(Bilibili.platform,
                                            collection,
                                            page,
                                            Bilibili.pagesize,
                                            warmup,
-                                           lambda: Bilibili.raw_fetch_async(warmup, page))
+                                           lambda: Bilibili.raw_fetch_async(warmup, page),
+                                           retry_on_task_id)
 
 
-# 腾讯数据源 ~ 注入到任务容器
+# 腾讯数据源 ~ 通过控制反转注入到任务容器
 @inject
 class Tencent:
     pagesize: int = 30
@@ -224,7 +248,8 @@ class Tencent:
     @staticmethod
     async def get_movies(warmup: WarmupHandler,
                          session: aiohttp.ClientSession,
-                         page: int = 0) -> list[MovieEntityV2]:
+                         page: int = 0,
+                         retry_on_task_id: str = '') -> list[MovieEntityV2]:
         result: list[MovieEntityV2] = []
         Tencent.payload["page_context"]["page_index"] = str(page)
         Tencent.payload["page_params"]["page"] = str(page)
@@ -232,7 +257,7 @@ class Tencent:
         async with session.post(Tencent.base_url, json=Tencent.payload) as response:
             response_text = await response.text()
             json_object = json.loads(response_text)
-            write_in(warmup, Tencent.platform, page, 30, json_object)  # 缓存到json
+            write_in(warmup, Tencent.platform, page, 30, json_object, retry_on_task_id)  # 缓存到json
             if json_object["ret"] != 0:
                 err_msg: str = f"Error occurred when fetching movie data: {json_object['msg']}"
                 logger.error(err_msg)
@@ -295,23 +320,27 @@ class Tencent:
             )
 
     @staticmethod
-    async def raw_fetch_async(warmup: WarmupHandler, page: int) -> list[MovieEntityV2]:
+    async def raw_fetch_async(warmup: WarmupHandler,
+                              page: int,
+                              retry_on_task_id: str = '') -> list[MovieEntityV2]:
         async with aiohttp.ClientSession() as session:
-            return await Tencent.get_movies(warmup, session, page)
+            return await Tencent.get_movies(warmup, session, page, retry_on_task_id)
 
     @staticmethod
     async def run_async(warmup: WarmupHandler,
                         collection: AsyncIOMotorCollection,
-                        page: int):
+                        page: int,
+                        retry_on_task_id: str = ''):
         await abstract_run_with_checkpoint(Tencent.platform,
                                            collection,
                                            page,
                                            Tencent.pagesize,
                                            warmup,
-                                           lambda: Tencent.raw_fetch_async(warmup, page))
+                                           lambda: Tencent.raw_fetch_async(warmup, page, retry_on_task_id),
+                                           retry_on_task_id)
 
 
-# 爱奇艺数据源 ~ 注入到任务容器
+# 爱奇艺数据源 ~ 通过控制反转注入到任务容器
 @inject
 class IQiYi:
     pagesize: int = 24
@@ -324,12 +353,15 @@ class IQiYi:
     }
 
     @staticmethod
-    async def raw_fetch_async(warmup: WarmupHandler, page: int = 0) -> list[MovieEntityV2]:
+    async def raw_fetch_async(warmup: WarmupHandler,
+                              page: int = 0,
+                              retry_on_task_id: str = '') -> list[MovieEntityV2]:
         async with aiohttp.ClientSession() as session:
             IQiYi.params['page_id'] = str(page)
             async with session.get(IQiYi.base_url, params=IQiYi.params) as response:
                 json_object = await response.json()  # 直接获取JSON
-                write_in(warmup, IQiYi.platform, page, 30, json_object)  # 缓存到json
+                # 缓存到json
+                write_in(warmup, IQiYi.platform, page, 30, json_object, retry_on_task_id)
                 result: list[MovieEntityV2] = []
                 results = json_object["data"]
                 now_time: str = TimeUtil.now()
@@ -365,13 +397,15 @@ class IQiYi:
     @staticmethod
     async def run_async(warmup: WarmupHandler,
                         collection: AsyncIOMotorCollection,
-                        page: int):
+                        page: int,
+                        retry_on_task_id: str = ''):
         await abstract_run_with_checkpoint(IQiYi.platform,
                                            collection,
                                            page,
                                            IQiYi.pagesize,
                                            warmup,
-                                           lambda: IQiYi.raw_fetch_async(warmup, page))
+                                           lambda: IQiYi.raw_fetch_async(warmup, page, retry_on_task_id),
+                                           retry_on_task_id)
 
 
 # 优酷数据源 ~ 注入到任务容器
