@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-from datetime import datetime
+import time
 from typing import Callable, Awaitable
 
 import aiohttp
@@ -29,15 +29,29 @@ def checkpoint_rollback(cls):
     return cls
 
 
+semaphore = asyncio.Semaphore(100)  # 信号量控制并发
+
+
+async def control_concurrency(cls, warmup, collection, page):
+    async with semaphore:  # 通过信号量限制并发
+        return await cls.run_async(warmup, collection, page)
+
+
 async def run_all(warmup: WarmupHandler,
                   collection: AsyncIOMotorCollection,
                   total: int):
     tasks = []
     for cls in _task_run_registry:
         batches = total // cls.pagesize
-        for page in range(1, batches + 1):
-            tasks.append(cls.run_async(warmup, collection, page))
+        for page in range(1, batches + 2):
+            task = control_concurrency(cls, warmup, collection, page)
+            tasks.append(task)
     await asyncio.gather(*tasks)
+
+
+async def control_rollback_concurrency(cls, warmup, collection, batch, task_id):
+    async with semaphore:  # 通过信号量限制并发
+        return await cls.run_async(warmup, collection, batch, task_id)
 
 
 async def rollback_all(warmup: WarmupHandler,
@@ -50,8 +64,9 @@ async def rollback_all(warmup: WarmupHandler,
             for task_id in rollback_trace[key]:
                 # 从检点开始重试
                 batch: int = rollback_trace[key][task_id]
+                task = control_rollback_concurrency(cls, warmup, collection, batch, task_id)
                 logger.info(f'Checkpoint Rollback -> found rollback checkpoint at {key} platform {batch} batch.')
-                tasks.append(cls.run_async(warmup, collection, batch, task_id))
+                tasks.append(task)
     await asyncio.gather(*tasks)
 
 
@@ -93,7 +108,7 @@ async def abstract_run_with_checkpoint(platform: str,
     batch_results = await async_func()
     warmup.put_batch_trace(task_id=batch_task_id, source=platform,
                            batch=page, pagesize=pagesize, status=Status.FINISHED,
-                           begin=batch_begin_time, end=datetime.now().strftime(TimeUtil.now()))
+                           begin=batch_begin_time, end=TimeUtil.now())
     logger.info(f'[Batch {page}] Inserting {platform} data into mongodb')
     # DB Task Key
     db_task_id: str = retry_on_task_id if retry_on_task_id.startswith('DB.TASK') else generate_key('DB.TASK')
@@ -104,11 +119,11 @@ async def abstract_run_with_checkpoint(platform: str,
     await MongoUtil.batch_put(collection, batch_results)
     warmup.put_db_trace(task_id=db_task_id, platform=platform,
                         batch=page, pagesize=pagesize, status=Status.FINISHED,
-                        begin=db_begin_time, end=datetime.now().strftime(TimeUtil.now()))
-    await asyncio.sleep(1)  # QOS缓冲
+                        begin=db_begin_time, end=TimeUtil.now())
+    await asyncio.sleep(5)  # QOS缓冲
 
 
-# B站数据源 ~ 通过控制反转注入到任务容器
+# B站数据源 ~ 通过控制反转注入到任务容器 0
 @inject
 class Bilibili:
     pagesize: int = 60
@@ -182,7 +197,7 @@ class Bilibili:
     async def raw_fetch_async(warmup: WarmupHandler,
                               page: int,
                               retry_on_task_id: str = '') -> list[MovieEntityV2]:
-        Bilibili.params['page'] = page
+        Bilibili.params['page'] = page - 1
         Bilibili.params['pagesize'] = Bilibili.pagesize
         async with aiohttp.ClientSession() as session:
             async with session.get(Bilibili.base_url,
@@ -191,7 +206,7 @@ class Bilibili:
                 if response.status == 200:
                     json_object = await response.json()  # 解析数据
                     # 缓存到json
-                    write_in(warmup, Bilibili.platform, page, Bilibili.pagesize, json_object, retry_on_task_id)
+                    await write_in(warmup, Bilibili.platform, page, Bilibili.pagesize, json_object, retry_on_task_id)
                     return await Bilibili.handle_data(json_object)
         return []
 
@@ -209,7 +224,7 @@ class Bilibili:
                                            retry_on_task_id)
 
 
-# 腾讯数据源 ~ 通过控制反转注入到任务容器
+# 腾讯数据源 ~ 通过控制反转注入到任务容器 1
 @inject
 class Tencent:
     pagesize: int = 30
@@ -218,14 +233,14 @@ class Tencent:
     cover_url: str = 'https://v.qq.com/x/cover/{cid}.html'
     payload: dict[str: any] = {
         "page_context": {
-            "page_index": "1"
+            "page_index": "1"  # page默认从1开始
         },
         "page_params": {
             "page_id": "channel_list_second_page",
             "page_type": "operation",
             "channel_id": "100173",
             "filter_params": "",
-            "page": "1",
+            "page": "1",  # page默认从1开始
             "new_mark_label_enabled": "1",
         },
         "page_bypass_params": {
@@ -248,7 +263,7 @@ class Tencent:
     @staticmethod
     async def get_movies(warmup: WarmupHandler,
                          session: aiohttp.ClientSession,
-                         page: int = 0,
+                         page: int = 1,
                          retry_on_task_id: str = '') -> list[MovieEntityV2]:
         result: list[MovieEntityV2] = []
         Tencent.payload["page_context"]["page_index"] = str(page)
@@ -257,7 +272,7 @@ class Tencent:
         async with session.post(Tencent.base_url, json=Tencent.payload) as response:
             response_text = await response.text()
             json_object = json.loads(response_text)
-            write_in(warmup, Tencent.platform, page, 30, json_object, retry_on_task_id)  # 缓存到json
+            await write_in(warmup, Tencent.platform, page, 30, json_object, retry_on_task_id)  # 缓存到json
             if json_object["ret"] != 0:
                 err_msg: str = f"Error occurred when fetching movie data: {json_object['msg']}"
                 logger.error(err_msg)
@@ -296,6 +311,7 @@ class Tencent:
             global_data: any = json_object["global"]
             cover_info: any = global_data["coverInfo"]
             now_time: str = TimeUtil.now()
+            time.sleep(1)
             return MovieEntityV2(  # 添加数据到结果集
                 _id=StringUtil.hash(item["params"]["title"]),
                 fixed_title=item["params"]["title"],
@@ -310,7 +326,7 @@ class Tencent:
                     score=score,
                     actors=[star["star_name"] for star in actor_list],
                     movie_type=[item["params"]["main_genre"]],
-                    release_date=item['params']['epsode_pubtime'],
+                    release_date=item['params'].get('epsode_pubtime', ''),
                     metadata={
                         'cid': cid,
                         'vid': cover_info["video_ids"][0],
@@ -340,8 +356,8 @@ class Tencent:
                                            retry_on_task_id)
 
 
-# 爱奇艺数据源 ~ 通过控制反转注入到任务容器
-@inject
+# 爱奇艺数据源 ~ 通过控制反转注入到任务容器 0
+# @inject
 class IQiYi:
     pagesize: int = 24
     platform: str = 'iqiyi'
@@ -357,11 +373,11 @@ class IQiYi:
                               page: int = 0,
                               retry_on_task_id: str = '') -> list[MovieEntityV2]:
         async with aiohttp.ClientSession() as session:
-            IQiYi.params['page_id'] = str(page)
+            IQiYi.params['page_id'] = str(page - 1)
             async with session.get(IQiYi.base_url, params=IQiYi.params) as response:
                 json_object = await response.json()  # 直接获取JSON
                 # 缓存到json
-                write_in(warmup, IQiYi.platform, page, 30, json_object, retry_on_task_id)
+                await write_in(warmup, IQiYi.platform, page, IQiYi.pagesize, json_object, retry_on_task_id)
                 result: list[MovieEntityV2] = []
                 results = json_object["data"]
                 now_time: str = TimeUtil.now()
@@ -408,7 +424,8 @@ class IQiYi:
                                            retry_on_task_id)
 
 
-# 优酷数据源 ~ 注入到任务容器
+# 优酷数据源 ~ 注入到任务容器 1
+# @inject
 class YouKu:
     pagesize: int = 60
     platform: str = 'youku'
@@ -425,9 +442,174 @@ class YouKu:
         "Referer": "https://www.youku.com/category/show/type_%E7%94%B5%E5%BD%B1.html",
     }
 
+    @staticmethod
+    async def get_movie_info(obj_data: any):
+        async with aiohttp.ClientSession() as session:
+            async with session.get('https:' + obj_data["videoLink"]) as response:
+                html = await response.text()
+                j = re.findall(r"__INITIAL_DATA__ =(.+)?;<", html)[0]
+                json_object = json.loads(j)
+                root_data = json_object["data"]["data"]
+                root_nodes = json_object["data"]["model"]["detail"]["data"]["nodes"]
+                item = {
+                    'intro': '',
+                    'release_date': '',
+                    'cover_url': '',
+                    'score': -1.0,
+                    'movie_type': [],
+                    'directors': [],
+                    'actors': []
+                }
+                if root_data["type"] == 10001:
+                    item['release_date'] = root_data["data"]["extra"]["showReleaseTime"]  # 发布日期
+                for node in root_nodes:
+                    if not node["type"] == 10001:
+                        continue
+                    sub_nodes = node["nodes"]
+                    for sub_node in sub_nodes:
+                        if not sub_node["type"] == 20009:
+                            continue
+                        child_nodes = sub_node["nodes"]
+                        for child_node in child_nodes:
+                            if child_node["type"] == 20010:
+                                data = child_node["data"]
+                                item['cover_url'] = data["showImgV"]
+                                item['score'] = safe_float_conversion(data.get('score', ''))
+                                item['movie_type'] = data["introSubTitle"]
+                                item['intro'] = data["desc"]
+                            elif child_node["type"] == 10011:
+                                data = child_node["data"]
+                                if "导演" in data["subtitle"]:
+                                    item['directors'].append(data["title"])
+                                else:
+                                    item['actors'].append(data["title"])
+                time.sleep(3)
+                now_time: str = TimeUtil.now()
+                return MovieEntityV2(  # 添加数据到结果集
+                    _id=StringUtil.hash(obj_data["title"]),
+                    fixed_title=obj_data["title"],
+                    create_time=now_time,
+                    update_time=now_time,
+                    platform_detail=[PlatformDetail(
+                        source=YouKu.platform,
+                        title=obj_data["title"],
+                        cover_url=item['cover_url'],
+                        create_time=now_time,
+                        description=item['intro'],
+                        score=item['score'],
+                        directors=item['directors'],
+                        actors=item['actors'],
+                        movie_type=item['movie_type'],
+                        release_date=item['release_date'],
+                        metadata={
+                            'summary': obj_data
+                        }
+                    )],
+                )
 
-# 豆瓣数据源 ~ 注入到任务容器
-class DouBan:
-    pagesize: int = 60
-    platform: str = 'douban'
-    base_url: str = "https://mesh.if.iqiyi.com/portal/lw/videolib/data?ret_num=60&channel_id=1&page_id={PAGE_ID}"
+    @staticmethod
+    async def raw_fetch_async(warmup: WarmupHandler,
+                              page: int = 1,
+                              retry_on_task_id: str = '') -> list[MovieEntityV2]:
+        YouKu.params['pageNo'] = str(page)
+        async with aiohttp.ClientSession(headers=YouKu.youku_headers) as session:
+            YouKu.params['pageNo'] = str(page)
+            async with session.get(YouKu.base_url, params=YouKu.params) as response:
+                json_object = await response.json()
+                # 缓存到json
+                await write_in(warmup, YouKu.platform, page, YouKu.pagesize, json_object, retry_on_task_id)
+                result: list[MovieEntityV2] = []
+                results = json_object["data"]["filterData"]["listData"]
+                for data in results:
+                    fetch_res: MovieEntityV2 = await YouKu.get_movie_info(data)
+                    result.append(fetch_res)
+                return result
+
+    @staticmethod
+    async def run_async(warmup: WarmupHandler,
+                        collection: AsyncIOMotorCollection,
+                        page: int,
+                        retry_on_task_id: str = ''):
+        await abstract_run_with_checkpoint(YouKu.platform,
+                                           collection,
+                                           page,
+                                           YouKu.pagesize,
+                                           warmup,
+                                           lambda: YouKu.raw_fetch_async(warmup, page, retry_on_task_id),
+                                           retry_on_task_id)
+
+
+# 芒果数据源 ~ 注入到任务容器 1
+# @inject
+class MgTV:
+    pagesize: int = 100
+    platform: str = 'mgtv'
+    base_url: str = 'https://pianku.api.mgtv.com/rider/list/pcweb/v3'
+    params: dict[str, str | int] = {
+        'allowedRC': 1,
+        'platform': 'pcweb',
+        'channelId': 3,
+        'pn': 1,  # page 页号 默认从1开始
+        'pc': pagesize,  # pagesize 页大小 默认80
+        'hudong': 1,
+        '_support': 10000000,
+        'kind': 'a1',
+        'edition': 'a1',
+        'area': 'a1',
+        'year': 'all',
+        'chargeInfo': 'a1',
+        'sort': 'c2'
+    }
+
+    @staticmethod
+    async def raw_fetch_async(warmup: WarmupHandler,
+                              page: int = 1,
+                              retry_on_task_id: str = '') -> list[MovieEntityV2]:
+        MgTV.params['pn'] = page
+        async with aiohttp.ClientSession() as session:
+            async with session.get(MgTV.base_url, params=MgTV.params) as response:
+                json_object = await response.json()  # 直接获取JSON
+                # 缓存到json
+                await write_in(warmup, MgTV.platform, page, MgTV.pagesize, json_object, retry_on_task_id)
+                result: list[MovieEntityV2] = []
+                results = json_object['data']['hitDocs']
+                now_time: str = TimeUtil.now()
+                for data in results:
+                    result.append(
+                        MovieEntityV2(  # 添加数据到结果集
+                            _id=StringUtil.hash(data['title']),
+                            fixed_title=data['title'],
+                            create_time=now_time,
+                            update_time=now_time,
+                            platform_detail=[PlatformDetail(
+                                source=MgTV.platform,
+                                title=data['title'],
+                                cover_url=data['img'],
+                                create_time=now_time,
+                                description=data['story'],
+                                score=safe_float_conversion(data.get('zhihuScore', '')),
+                                actors=str(data['subtitle']).split(','),
+                                movie_type=data['kind'],
+                                release_date=data['year'],
+                                metadata={
+                                    'clip_id': data['clipId'],
+                                    'views': data['views'],
+                                    'update_time': data['se_updateTime'],
+                                }
+                            )],
+                        )
+                    )
+                return result
+
+    @staticmethod
+    async def run_async(warmup: WarmupHandler,
+                        collection: AsyncIOMotorCollection,
+                        page: int,
+                        retry_on_task_id: str = ''):
+        await abstract_run_with_checkpoint(MgTV.platform,
+                                           collection,
+                                           page,
+                                           MgTV.pagesize,
+                                           warmup,
+                                           lambda: MgTV.raw_fetch_async(warmup, page, retry_on_task_id),
+                                           retry_on_task_id)

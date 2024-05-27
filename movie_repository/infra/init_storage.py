@@ -38,10 +38,12 @@ async def warmup_system(total: int) -> WarmupHandler:
         timestamp: int = int(datetime.now().timestamp())
         # 将字典写入 YAML 文件
         with open(WARMUP_PATH, 'w', encoding='utf-8') as file:
-            default_warmup = WarmupData(f"{unique_id}_{timestamp}")
+            default_warmup: WarmupData = WarmupData(f"{unique_id}_{timestamp}")
             yaml.dump(asdict(default_warmup), file)
             file.close()
-        return WarmupHandler(warmup_data=default_warmup, path=WARMUP_PATH)
+            default_handler: WarmupHandler = WarmupHandler(warmup_data=default_warmup, path=WARMUP_PATH)
+            await run_all(default_handler, COLLECTIONS, total)  # 初始化项目
+            return default_handler
     logger.info(f"Reading warmup configuration to restore current system.")
     with open(WARMUP_PATH, 'r', encoding='utf-8') as file:
         warmup_data: dict = yaml.safe_load(file)
@@ -59,7 +61,7 @@ async def figure_out_warmup(warmup: WarmupData, total: int) -> WarmupHandler:
         为什么如此伟大的Python不支持从平台线程栈的角度去构造纤程呢
         非要把一个并发的高级概念卑微地分配在一个loop循环里面，逆天
         '''
-        await run_all(instance, COLLECTIONS, total)  # 只有发生版本更新才要启动重新拉取的任务
+        await run_all(instance, COLLECTIONS, total)  # 发生版本更新要启动重新拉取的任务
     else:
         # 检查PENDING或ERROR任务
         await instance.try_rollback(COLLECTIONS)
