@@ -129,7 +129,7 @@ async def abstract_run_with_checkpoint(platform: str,
 
 
 # B站数据源 ~ 通过控制反转注入到任务容器 0
-@inject
+
 class Bilibili:
     pagesize: int = 60
     platform: str = 'bilibili'
@@ -168,7 +168,7 @@ class Bilibili:
                             raise Exception(f"{err} status code: ", response.status)
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 if attempt < retries - 1:  # 如果不是最后一次尝试，则等待后重试
-                    await asyncio.sleep(2**attempt)  # 指数退避策略
+                    await asyncio.sleep(2 ** attempt)  # 指数退避策略
                 else:  # 最后一次尝试仍然失败，可以选择抛出异常或者其他错误处理
                     err = f"Failed to fetch actors after several retries at platform {Bilibili.platform} ep_id {ep_id}."
                     logger.error(err)
@@ -305,6 +305,7 @@ class Tencent:
                 Tencent.get_movie_detail(session, item["params"]["cid"], item)
                 for item in cards
             ]
+            tasks = [item for item in tasks if item is not None]
             movie_entities = await asyncio.gather(*tasks)
             result.extend(movie_entities)
         return result
@@ -312,8 +313,18 @@ class Tencent:
     @staticmethod
     async def get_movie_detail(session: aiohttp.ClientSession, cid: str, item: dict[str, any]) -> MovieEntityV2:
         async with session.get(Tencent.cover_url.format(cid=cid)) as response:
+            logger.info(cid)
             response_text = await response.text()
-            matches = re.findall(r"window\.__PINIA__=(.+)?</script>", response_text)[0]
+            try:
+                matches = re.findall(r"window\.__PINIA__=(.+)?</script>", response_text)[0]
+            except Exception:
+                response = await session.get(Tencent.cover_url.format(cid=cid))
+                response_text = await response.text()
+                try:
+                    matches = re.findall(r"window\.__PINIA__=(.+)?</script>", response_text)[0]
+                except Exception:
+                    return None
+
             matches = (
                 matches.replace("undefined", "null")
                 .replace("Array.prototype.slice.call(", "")
@@ -349,7 +360,7 @@ class Tencent:
                     metadata={
                         'cid': cid,
                         'vid': cover_info["video_ids"][0],
-                        'area': item["params"]["area_name"],
+                        'area': item["params"].get("area_name", ""),
                     }
                 )],
             )
@@ -375,7 +386,7 @@ class Tencent:
 
 
 # 爱奇艺数据源 ~ 通过控制反转注入到任务容器 1
-@inject
+
 class IQiYi:
     pagesize: int = 24
     platform: str = 'iqiyi'
@@ -445,7 +456,7 @@ class IQiYi:
 
 
 # 优酷数据源 ~ 注入到任务容器 1
-@inject
+
 class YouKu:
     pagesize: int = 60
     platform: str = 'youku'
@@ -556,7 +567,7 @@ class YouKu:
 
 
 # 芒果数据源 ~ 注入到任务容器 1
-@inject
+
 class MgTV:
     pagesize: int = 60
     platform: str = 'mgtv'
