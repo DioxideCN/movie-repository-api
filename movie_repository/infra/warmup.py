@@ -1,14 +1,20 @@
+import json
+import os
 import uuid
 from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime
 from enum import Enum
 
+import aiofiles
 import yaml
 from motor.motor_asyncio import AsyncIOMotorCollection
 
 from movie_repository.entity import WarmupData
 from movie_repository.infra import fetch
+from movie_repository.infra.init_config import kafka_consumer, saves_path
+from movie_repository.util import logger
+from movie_repository.util.default_util import TimeUtil
 
 
 class Status(str, Enum):
@@ -114,7 +120,33 @@ class WarmupHandler:
         # 更新内存中的 warmup_data
         self.warmup_data = read_data
 
-    def save_to_file(self):
+    async def save_to_file(self):
+        # 消费掉所有kafka中的file消息
+        for msg in kafka_consumer:
+            data = json.loads(msg.value.decode('utf-8'))
+            # 假设这是你的写入逻辑
+            retry_on_task_id: str = data['retry_on_task_id']
+            file_name: str = data['file_name']
+            batch: int = data['batch']
+            pagesize: int = data['pagesize']
+            data_set: any = data['data_set']
+            # 从kafka消费消息来顺序写入文件
+            file_task_id = retry_on_task_id if retry_on_task_id.startswith('FILE.TASK') else generate_key(
+                'FILE.TASK')
+            file_begin_time = TimeUtil.now()
+            self.put_file_trace(task_id=file_task_id, directory=file_name,
+                                batch=batch, pagesize=pagesize, status=Status.PENDING,
+                                begin=file_begin_time)
+            file_path = os.path.join(saves_path, file_name, f'{file_name}_{batch}.json')
+            logger.info(f"(Kafka Lifecycle) Saving data into file 'saves/{file_name}/{file_name}_{batch}.json'.")
+            async with aiofiles.open(file_path, 'w', encoding='utf-8') as file:
+                await file.write(json.dumps(data_set, indent=4))
+            self.put_file_trace(task_id=file_task_id, directory=file_name,
+                                batch=batch, pagesize=pagesize, status=Status.FINISHED,
+                                begin=file_begin_time, end=TimeUtil.now())
+        logger.info('(Kafka Lifecycle) Closing Kafka consumer.')
+        kafka_consumer.close()
+        logger.info('Starting saving warmup resources into file.')
         # 将内存中的 warmup_data 写入文件
         with open(self.path, 'w', encoding='utf-8') as file:
             yaml.dump(asdict(self.warmup_data), file)
@@ -129,4 +161,6 @@ class WarmupHandler:
                     platform = trace['source']
                     task_id = trace['task_id']
                     results[platform][task_id] = int(trace['batch'])
+                    logger.info(f'(Rollback) Task {task_id} with {trace["status"]} '
+                                f'at {platform} platform will be rollback.')
         await fetch.rollback_all(self, collection, results)

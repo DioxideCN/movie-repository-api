@@ -38,7 +38,7 @@ class MongoUtil:
                 {"_id": StringUtil.hash(movie.fixed_title)},
                 {
                     "$setOnInsert": movie_dict,
-                    "$push": {"platform_data": {"$each": movie_dict.pop('platform_detail')}}
+                    "$addToSet": {"platform_data": {"$each": movie_dict.pop('platform_detail')}}
                 },
                 upsert=True
             )
@@ -59,12 +59,30 @@ class MongoUtilV2:
             for field in exclude_fields:
                 movie_dict.pop(field, None)
             # 准备批量操作
+            platform_data_item = movie_dict.pop('platform_detail')
             op = UpdateOne(
-                {"_id": StringUtil.hash(movie.fixed_title)},
-                {
-                    "$setOnInsert": movie_dict,
-                    "$push": {"platform_data": {"$each": movie_dict.pop('platform_detail')}}
-                },
+                {"_id": movie_dict['_id']},
+                [{
+                    "$set": {
+                        "data": movie_dict['data'],  # 更新顶级data字段
+                        "platform_data": {
+                            "$cond": {
+                                "if": {"$isArray": "$platform_data"},
+                                "then": {
+                                    "$function": {
+                                        "body": """function(platform_data, new_data) { let index = 
+                                                platform_data.findIndex(item => item.source === new_data.source); 
+                                                if (index !== -1) { platform_data[index] = new_data; } else { 
+                                                platform_data.push(new_data); } return platform_data; }""",
+                                        "args": ["$platform_data", platform_data_item],
+                                        "lang": "js"
+                                    }
+                                },
+                                "else": [platform_data_item]  # 如果platform_data不存在，创建新数组
+                            }
+                        }
+                    }
+                }],
                 upsert=True
             )
             MongoUtilV2.operations_stack.append(op)
