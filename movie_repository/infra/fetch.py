@@ -129,7 +129,7 @@ async def abstract_run_with_checkpoint(platform: str,
 
 
 # B站数据源 ~ 通过控制反转注入到任务容器 0
-
+@inject
 class Bilibili:
     pagesize: int = 60
     platform: str = 'bilibili'
@@ -386,7 +386,7 @@ class Tencent:
 
 
 # 爱奇艺数据源 ~ 通过控制反转注入到任务容器 1
-
+@inject
 class IQiYi:
     pagesize: int = 24
     platform: str = 'iqiyi'
@@ -456,7 +456,7 @@ class IQiYi:
 
 
 # 优酷数据源 ~ 注入到任务容器 1
-
+@inject
 class YouKu:
     pagesize: int = 60
     platform: str = 'youku'
@@ -567,7 +567,7 @@ class YouKu:
 
 
 # 芒果数据源 ~ 注入到任务容器 1
-
+@inject
 class MgTV:
     pagesize: int = 60
     platform: str = 'mgtv'
