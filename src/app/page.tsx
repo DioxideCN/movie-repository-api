@@ -1,76 +1,38 @@
 'use client';
 
-import MapStyles from '@/scss/page.module.scss';
-
-import { CaretDownOutlined } from '@ant-design/icons';
-import Select from 'antd/lib/select';
-import ConfigProvider from 'antd/lib/config-provider';
-
-import Map from '@/components/Map';
-import { useCallback, useState } from 'react';
-
-type CityName = keyof typeof cityData;
-const provinceData: CityName[] = ['浙江', '江苏'];
-const cityData = {
-  '浙江': ['杭州', '宁波', '温州'],
-  '江苏': ['南京', '苏州', '镇江'],
-};
+import '@/scss/page.module.scss';
+import {useEffect, useState} from "react";
 
 export default function Home() {
-  const [cities, setCities] = useState(cityData[provinceData[0] as CityName]);
-  const [secondCity, setSecondCity] = useState(cityData[provinceData[0]][0] as CityName);
+  const [movies, setMovies]: [MovieType[], any] = useState<MovieType[]>([]);
 
-  const handleProvinceChange = (value: CityName) => {
-    setCities(cityData[value]);
-    setSecondCity(cityData[value][0] as CityName);
-  };
-
-  const onSecondCityChange = (value: CityName) => {
-    setSecondCity(value);
-  };
+  useEffect(() => {
+    const fetchMovies = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/fetch/movies?page=1&pagesize=42');
+        if (response.status >= 200 && response.status < 300) {
+          const data = await response.json();
+          setMovies(data.data);
+        } else {
+          console.error('Failed to fetch movies:', response.statusText);
+        }
+      } catch (error) {
+        console.error('Error fetching movies:', error);
+      }
+    };
+    fetchMovies().then();
+  }, []);
 
   return (
-    <main className="relative h-screen">
-      <Map />
-      <div className={`flex absolute right-0 h-screen p-4 w-1/3 ${MapStyles['panel']}`}>
-        <div className={`${MapStyles['panel-expander']}`}></div>
-        <div className={`flex w-full p-5 ${MapStyles['panel-container']}`}>
-          <ConfigProvider
-            theme={{
-              token: {
-                colorBgContainer: MapStyles.panelSearchBgColor,
-                colorBgElevated: MapStyles.panelSearchBgColor,
-                colorText: MapStyles.normalFontColor,
-                colorTextPlaceholder: MapStyles.placeholderFontColor,
-                colorPrimary: MapStyles.panelSearchBtnBgColor,
-                colorPrimaryActive: MapStyles.panelSearchBtnHoverColor,
-                colorPrimaryHover: MapStyles.panelSearchBtnHoverColor,
-                colorTextQuaternary: MapStyles.normalFontColor,
-                controlHeight: 35,
-                borderRadiusLG: 6,
-                lineWidth: 0,
-              }
-            }}>
-            <Select
-              style={{marginRight: '.75rem', width: '25%', minWidth: '100px'}}
-              defaultValue={provinceData[0]}
-              onChange={handleProvinceChange}
-              options={provinceData.map((province) => ({ label: province, value: province }))}
-              size='large'
-              placeholder='省/市/区'
-              suffixIcon={<CaretDownOutlined />}
-            />
-            <Select
-              className='flex-1'
-              value={secondCity}
-              onChange={onSecondCityChange}
-              options={cities.map((city) => ({ label: city, value: city }))}
-              size='large'
-              placeholder='城市'
-              suffixIcon={<CaretDownOutlined />}
-            />
-          </ConfigProvider>
-        </div>
+    <main className="w-full h-screen">
+      <div id="container" className="flex flex-wrap">
+        {movies.map((movie: MovieType, index: number) => (
+            <div key={index} className="w-1/2 sm:w-1/3 md:w-1/4 lg:w-1/5 xl:w-1/7 p-2">
+              <img src={movie.platform_detail[0].cover_url} alt={movie.fixed_title} className="w-full h-auto rounded-md"/>
+              <div className="text-title">{movie.fixed_title}</div>
+              <div className="text-subtitle">共 {movie.platform_detail.length} 条平台记录</div>
+            </div>
+        ))}
       </div>
     </main>
   );

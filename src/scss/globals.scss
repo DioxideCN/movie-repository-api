@@ -3,9 +3,50 @@
 @import 'tailwindcss/utilities';
 
 $global-font: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-$background-color: #002B36;
+$background-color: rgb(13, 14, 17);
 
 body {
     font-family: $global-font;
     background: $background-color;
+}
+
+#container { padding: 56px 110px; }
+
+.text-title {
+    font-size: 14px;
+    height: 20px;
+    line-height: 20px;
+    cursor: pointer;
+    margin-top: 8px;
+    font-weight: 500;
+    color: hsl(215 19% 98%);
+    text-overflow: ellipsis;
+    user-select: none;
+}
+
+.text-subtitle {
+    font-size: 12px;
+    color: #727272;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    height: 16px;
+    line-height: 16px;
+    margin: 2px 0 0;
+}
+
+::-webkit-scrollbar-track
+{
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar
+{
+    width: 6px;
+}
+
+::-webkit-scrollbar-thumb
+{
+    border-radius: 10px;
+    background-color: rgb(60, 61, 71);
 }

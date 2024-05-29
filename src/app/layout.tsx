@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { AntdRegistry } from '@ant-design/nextjs-registry';
 import "@/scss/globals.scss";
+import React from "react";
 
 export const metadata: Metadata = {
-  title: "Momentum City Brain",
-  description: "Momentum city brain.",
+  title: "Movie Repository",
+  description: "Movie repository frontend.",
   icons: {
     icon: {
       url: "/favicon.ico",
