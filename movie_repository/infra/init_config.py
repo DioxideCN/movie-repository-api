@@ -58,16 +58,8 @@ async def init_configuration():
     kafka_client.add_topic(kafka_db_topic)
     kafka_client.close()
     # 尝试消费掉上次没有消费的消息
-    counter = 0
-    for msg in kafka_file_consumer:
-        counter += 1
-    logger.info(f'(Kafka Lifecycle) Consumed {counter} message(s) in last kafka file topic.')
-    kafka_file_consumer.close()
-    counter = 0
-    for msg in kafka_db_consumer:
-        counter += 1
-    logger.info(f'(Kafka Lifecycle) Consumed {counter} message(s) in last kafka db topic.')
-    kafka_db_consumer.close()
+    consume_messages(kafka_file_consumer, kafka_file_topic)
+    consume_messages(kafka_db_consumer, kafka_db_topic)
 
 
 def push_file_dump_msg(file_name: str,
@@ -106,3 +98,15 @@ def push_db_insert_msg(movies: List[MovieEntityV2]):
         for field in exclude_fields:
             movie_dict.pop(field, None)
         kafka_producer.send(kafka_db_topic, json.dumps(movie_dict).encode('utf-8'))
+
+
+def consume_messages(consumer, topic_name):
+    counter = 0
+    try:
+        for msg in consumer:
+            counter += 1
+        logger.info(f'(Kafka Lifecycle) Consumed {counter} message(s) in last {topic_name}.')
+    except Exception as e:
+        logger.error(f'Error while consuming messages from {topic_name}: {e}')
+    finally:
+        consumer.close()

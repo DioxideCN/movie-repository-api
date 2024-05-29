@@ -109,6 +109,9 @@ class WarmupHandler:
 
     @staticmethod
     async def consume_kafka_db_dump(collection: AsyncIOMotorCollection):
+        """
+        消费kafka的数据库新增消息
+        """
         logger.info('(Warmup Finalizer) Starting saving record(s) into mongodb.')
         kafka_db_consumer: KafkaConsumer = KafkaConsumer(kafka_db_topic,
                                                          bootstrap_servers=kafka_host,
@@ -172,7 +175,7 @@ class WarmupHandler:
         counter = 0
         for msg in kafka_file_consumer:
             data = json.loads(msg.value.decode('utf-8'))
-            # 假设这是你的写入逻辑
+            # 写入逻辑
             retry_on_task_id: str = data['retry_on_task_id']
             file_name: str = data['file_name']
             batch: int = data['batch']

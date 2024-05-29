@@ -60,10 +60,6 @@ async def figure_out_warmup(warmup: WarmupData, total: int) -> WarmupHandler:
     if instance.update_version():
         # 尝试版本更新
         logger.info('Warmup system version has been updated.')
-        '''
-        为什么如此伟大的Python不支持从平台线程栈的角度去构造纤程呢
-        非要把一个并发的高级概念卑微地分配在一个loop循环里面，逆天
-        '''
         await run_all(instance, total)  # 发生版本更新要启动重新拉取的任务
     else:
         # 检查PENDING或ERROR任务
