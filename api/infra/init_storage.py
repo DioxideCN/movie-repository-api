@@ -11,13 +11,13 @@ from . import init_config
 from .fetch import run_all
 from .init_config import kafka_producer
 from .warmup import WarmupHandler
-from movie_repository.util.logger import logger
-from movie_repository.entity.entity_warmup import WarmupData
-from movie_repository.entity.entity_warmup import mask
-from movie_repository.entity.entity_movie import MovieEntityV2
+from api.util.logger import logger
+from api.entity.entity_warmup import WarmupData
+from api.entity.entity_movie import MovieEntityV2
+from api.util.default_util import ObjectUtil
 
 client = AsyncIOMotorClient("mongodb://localhost:27017/")  # 端
-db = client["movie_repository"]  # 库
+db = client["api"]  # 库
 collections: AsyncIOMotorCollection = db[MovieEntityV2.collection]  # 表
 warmup_path: str = os.path.join(init_config.saves_path, 'warmup.yaml')
 
@@ -50,7 +50,7 @@ async def warmup_system(total: int) -> WarmupHandler:
     with open(warmup_path, 'r', encoding='utf-8') as file:
         warmup_data: dict = yaml.safe_load(file)
         logger.info(f"Read file 'warmup.yaml' into system.")
-        read_data: WarmupData = mask(warmup_data, WarmupData)
+        read_data: WarmupData = ObjectUtil.mask(warmup_data, WarmupData)
         file.close()
         return await figure_out_warmup(read_data, total)
 

@@ -1,6 +1,6 @@
 import os
 
-from movie_repository.util.logger import logger
+from api.util.logger import logger
 from .init_config import init_configuration
 from .init_storage import init_database, collections
 

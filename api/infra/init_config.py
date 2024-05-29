@@ -6,8 +6,8 @@ from typing import List
 
 from kafka import KafkaProducer, KafkaClient, KafkaConsumer
 
-from movie_repository.entity.entity_movie import MovieEntityV2
-from movie_repository.util.logger import logger
+from api.entity.entity_movie import MovieEntityV2
+from api.util.logger import logger
 
 kafka_host = 'localhost:9092'
 kafka_file_topic = 'file_updater_topic'
@@ -21,13 +21,19 @@ kafka_file_consumer: KafkaConsumer = KafkaConsumer(kafka_file_topic,
                                                    group_id=kafka_file_group,
                                                    auto_offset_reset='earliest',
                                                    enable_auto_commit=True,
-                                                   consumer_timeout_ms=1000)
+                                                   consumer_timeout_ms=1000,
+                                                   session_timeout_ms=30000,
+                                                   request_timeout_ms=305000,
+                                                   max_poll_interval_ms=300000)
 kafka_db_consumer: KafkaConsumer = KafkaConsumer(kafka_db_topic,
                                                  bootstrap_servers=kafka_host,
                                                  group_id=kafka_db_group,
                                                  auto_offset_reset='earliest',
                                                  enable_auto_commit=True,
-                                                 consumer_timeout_ms=1000)
+                                                 consumer_timeout_ms=1000,
+                                                 session_timeout_ms=30000,
+                                                 request_timeout_ms=305000,
+                                                 max_poll_interval_ms=300000)
 
 
 time_formatter: str = '%Y-%m-%d %H%M%S.%f'

@@ -12,12 +12,12 @@ import yaml
 from kafka import KafkaConsumer
 from motor.motor_asyncio import AsyncIOMotorCollection
 
-from movie_repository.entity import WarmupData
-from movie_repository.infra import fetch
-from movie_repository.infra.init_config import saves_path, kafka_db_topic, \
+from api.entity import WarmupData
+from api.infra import fetch
+from api.infra.init_config import saves_path, kafka_db_topic, \
     kafka_host, kafka_db_group, kafka_file_topic, kafka_file_group
-from movie_repository.util import logger
-from movie_repository.util.default_util import TimeUtil
+from api.util import logger
+from api.util.default_util import TimeUtil
 
 
 class Status(str, Enum):
@@ -122,7 +122,7 @@ class WarmupHandler:
         counter = 0
         for msg in kafka_db_consumer:
             data = json.loads(msg.value.decode('utf-8'))
-            platform_data_item = data.pop('platform_detail')[0]
+            platform_detail_item = data.pop('platform_detail')[0]
             await collection.update_one(
                 {"_id": data['_id']},
                 [{
@@ -136,20 +136,20 @@ class WarmupHandler:
                             }
                         },
                         "update_time": data['update_time'],
-                        "platform_data": {
+                        "platform_detail": {
                             "$cond": {
-                                "if": {"$isArray": "$platform_data"},
+                                "if": {"$isArray": "$platform_detail"},
                                 "then": {
                                     "$function": {
-                                        "body": """function(platform_data, new_data) { let index = 
-                                                platform_data.findIndex(item => item.source === new_data.source); 
-                                                if (index !== -1) { platform_data[index] = new_data; } else { 
-                                                platform_data.push(new_data); } return platform_data; }""",
-                                        "args": ["$platform_data", platform_data_item],
+                                        "body": """function(platform_detail, new_data) { let index = 
+                                                platform_detail.findIndex(item => item.source === new_data.source); 
+                                                if (index !== -1) { platform_detail[index] = new_data; } else { 
+                                                platform_detail.push(new_data); } return platform_detail; }""",
+                                        "args": ["$platform_detail", platform_detail_item],
                                         "lang": "js"
                                     }
                                 },
-                                "else": [platform_data_item]  # 如果platform_data不存在，创建新数组
+                                "else": [platform_detail_item]  # 如果platform_detail不存在，创建新数组
                             }
                         }
                     }

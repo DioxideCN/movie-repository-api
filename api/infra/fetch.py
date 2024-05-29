@@ -7,11 +7,11 @@ from typing import Callable, Awaitable
 import aiohttp
 from lxml import etree
 
-from movie_repository.util.logger import logger
-from movie_repository.entity.entity_movie import MovieEntityV2, PlatformDetail
+from api.util.logger import logger
+from api.entity.entity_movie import MovieEntityV2, PlatformDetail
 from .init_config import push_file_dump_msg, json_file, push_db_insert_msg
 from .warmup import WarmupHandler, Status, generate_key
-from movie_repository.util.default_util import StringUtil, TimeUtil
+from api.util.default_util import StringUtil, TimeUtil
 
 # 全局注册器
 _task_run_registry = []
