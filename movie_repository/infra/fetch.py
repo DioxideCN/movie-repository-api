@@ -16,6 +16,7 @@ from movie_repository.util.default_util import StringUtil, TimeUtil
 # 全局注册器
 _task_run_registry = []
 _rollback_run_registry = []
+_rick_control_timeout = 8
 
 
 class Platform:
@@ -26,7 +27,7 @@ class Platform:
     async def run_tasks(self):
         for task in self.tasks:
             await task
-            await asyncio.sleep(3)
+            await asyncio.sleep(3)  # 每个任务延迟3秒后进入下一个任务
 
 
 def inject(cls):
@@ -52,7 +53,7 @@ async def run_all(warmup: WarmupHandler,
     platforms: dict[str, Platform] = {name: Platform(name) for name in json_file}
     for cls in _task_run_registry:
         batches = math.ceil(total / cls.pagesize)
-        if cls.max_tasks and cls.max_tasks < batches:
+        if hasattr(cls, 'max_tasks') and cls.max_tasks < batches:
             batches = cls.max_tasks
         for page in range(1, batches + 1):  # scope [1, batches + 1)
             task = cls.run_async(warmup, page)
@@ -116,9 +117,10 @@ async def abstract_run_with_checkpoint(platform: str,
                            begin=batch_begin_time, end=TimeUtil.now())
 
 
-# B站数据源 ~ 通过控制反转注入到任务容器 0
+# B站数据源 ~ 通过控制反转注入到任务容器 min_page 0 total 5520
 @inject
 class Bilibili:
+    max_tasks: int = 92
     pagesize: int = 60
     platform: str = 'bilibili'
     base_url: str = 'https://api.bilibili.com/pgc/season/index/result'
@@ -133,7 +135,7 @@ class Bilibili:
         'season_type': 2,
         'sort': 0,
         'page': 0,
-        'pagesize': 0,
+        'pagesize': pagesize,
         'type': 1,
     }
 
@@ -173,7 +175,7 @@ class Bilibili:
                     eq_id = str(item['first_ep']['ep_id'])
                     movie = await Bilibili.create_movie_entity(item, eq_id)
                     movie_list.append(movie)
-                    await asyncio.sleep(10)  # 延迟阻塞退避风控
+                    await asyncio.sleep(_rick_control_timeout)  # 延迟阻塞退避风控
         return movie_list
 
     @staticmethod
@@ -206,7 +208,6 @@ class Bilibili:
     async def raw_fetch_async(page: int,
                               retry_on_task_id: str = '') -> list[MovieEntityV2]:
         Bilibili.params['page'] = page - 1
-        Bilibili.params['pagesize'] = Bilibili.pagesize
         async with aiohttp.ClientSession() as session:
             async with session.get(Bilibili.base_url,
                                    params=Bilibili.params,
@@ -230,9 +231,10 @@ class Bilibili:
                                            retry_on_task_id)
 
 
-# 腾讯数据源 ~ 通过控制反转注入到任务容器 1
+# 腾讯数据源 ~ 通过控制反转注入到任务容器 min_page 1 total 4980
 @inject
 class Tencent:
+    max_tasks: int = 166
     pagesize: int = 30
     platform: str = 'tencent'
     base_url: str = 'https://pbaccess.video.qq.com/trpc.vector_layout.page_view.PageService/getPage?video_appid=3000010'
@@ -289,7 +291,7 @@ class Tencent:
             for item in cards:
                 movie_detail = await Tencent.get_movie_detail(session, item["params"]["cid"], item)
                 result.append(movie_detail)
-                await asyncio.sleep(10)  # 延迟阻塞退避风控
+                await asyncio.sleep(_rick_control_timeout)  # 延迟阻塞退避风控
         return result
 
     @staticmethod
@@ -313,7 +315,6 @@ class Tencent:
             global_data: any = json_object["global"]
             cover_info: any = global_data["coverInfo"]
             now_time: str = TimeUtil.now()
-            await asyncio.sleep(10)  # 当前页中的每个结果获取都阻塞3秒
             return MovieEntityV2(  # 添加数据到结果集
                 _id=StringUtil.hash(item["params"]["title"]),
                 fixed_title=item["params"]["title"],
@@ -342,7 +343,6 @@ class Tencent:
                               retry_on_task_id: str = '') -> list[MovieEntityV2]:
         async with aiohttp.ClientSession() as session:
             movies = await Tencent.get_movies(session, page, retry_on_task_id)
-            await asyncio.sleep(5)  # 添加延迟以避免触发风控
             return movies
 
     @staticmethod
@@ -357,7 +357,7 @@ class Tencent:
                                            retry_on_task_id)
 
 
-# 爱奇艺数据源 ~ 通过控制反转注入到任务容器 1
+# 爱奇艺数据源 ~ 通过控制反转注入到任务容器 min_page 1 total 780
 @inject
 class IQiYi:
     max_tasks: int = 13
@@ -424,9 +424,10 @@ class IQiYi:
                                            retry_on_task_id)
 
 
-# 优酷数据源 ~ 注入到任务容器 1
+# 优酷数据源 ~ 注入到任务容器 min_page 1 total 4920
 @inject
 class YouKu:
+    max_tasks: int = 82
     pagesize: int = 60
     platform: str = 'youku'
     base_url: str = ('https://www.youku.com/category/data?session=%7B%22subIndex%22%3A24%2C%22trackInfo%22%3A%7B%22'
@@ -518,7 +519,7 @@ class YouKu:
                 for data in results:
                     fetch_res: MovieEntityV2 = await YouKu.get_movie_info(data)
                     result.append(fetch_res)
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(_rick_control_timeout)
                 return result
 
     @staticmethod
@@ -533,7 +534,7 @@ class YouKu:
                                            retry_on_task_id)
 
 
-# 芒果数据源 ~ 注入到任务容器 1
+# 芒果数据源 ~ 注入到任务容器 min_page 1 total 2400
 @inject
 class MgTV:
     max_tasks: int = 40
