@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from infra.init_app import init_app
 from router.fetch_router import router as fetch_router
@@ -27,3 +28,10 @@ async def lifespan(_app: FastAPI):
 
 # 启动FastAPI应用
 app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

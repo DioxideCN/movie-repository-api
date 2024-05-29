@@ -17,7 +17,7 @@ from api.entity.entity_movie import MovieEntityV2
 from api.util.default_util import ObjectUtil
 
 client = AsyncIOMotorClient("mongodb://localhost:27017/")  # 端
-db = client["api"]  # 库
+db = client["movie_repository"]  # 库
 collections: AsyncIOMotorCollection = db[MovieEntityV2.collection]  # 表
 warmup_path: str = os.path.join(init_config.saves_path, 'warmup.yaml')
 
