@@ -119,13 +119,14 @@ async def abstract_run_with_checkpoint(platform: str,
 
 # B站数据源 ~ 通过控制反转注入到任务容器 min_page 0 total 5520
 @inject
+@checkpoint_rollback
 class Bilibili:
-    max_tasks: int = 92
-    pagesize: int = 60
-    platform: str = 'bilibili'
-    base_url: str = 'https://api.bilibili.com/pgc/season/index/result'
-    actors_url: str = 'https://www.bilibili.com/bangumi/play/ep'
-    params = {
+    max_tasks: int = 92  # 可被构建的最大任务量
+    pagesize: int = 60  # 每页获取的电影数量
+    platform: str = 'bilibili'  # 平台唯一标识符(ID)
+    base_url: str = 'https://api.bilibili.com/pgc/season/index/result'  # 电影列表接口
+    actors_url: str = 'https://www.bilibili.com/bangumi/play/ep'  # 演员列表接口
+    params = {  # Query参数
         'area': -1,
         'style_id': -1,
         'release_date': -1,
@@ -141,6 +142,9 @@ class Bilibili:
 
     @staticmethod
     async def fetch_actors(ep_id: str) -> list[str]:
+        """
+        根据电影的ep_id来获取具体页面上的演员列表
+        """
         retries = 3  # 设置重试次数
         for attempt in range(retries):
             try:
@@ -149,6 +153,7 @@ class Bilibili:
                         if response.status == 200:
                             response_text = await response.text()
                             html = etree.HTML(response_text)
+                            # 使用xpath定位到演员列表的dom元素上来获取innerText()值
                             div_texts = html.xpath("//div[contains(text(), '出演演员')]//text()")
                             return filter_strings(''.join(t.strip() for t in div_texts)
                                                   .removeprefix('出演演员：').split('\n'))
@@ -166,22 +171,25 @@ class Bilibili:
 
     @staticmethod
     async def handle_data(raw_film_data: any) -> list[MovieEntityV2]:
+        """
+        处理电影信息的入口方法，先从API中获取当前pagesize条电影数据，然后交付给fetch_actors获取演员列表
+        """
         movie_list = []
         if 'data' in raw_film_data:
             data_film_data = raw_film_data['data']
             if 'list' in data_film_data:
                 film_data = data_film_data['list']
-                for item in film_data:  # 顺序处理每个项目并添加延迟
+                for item in film_data:  # 顺序(同步)处理每个项目并添加延迟来防止风控
                     eq_id = str(item['first_ep']['ep_id'])
                     movie = await Bilibili.create_movie_entity(item, eq_id)
-                    movie_list.append(movie)
+                    movie_list.append(movie)  # 将构造好的MovieEntityV2对象存入列表中
                     await asyncio.sleep(_rick_control_timeout)  # 延迟阻塞退避风控
         return movie_list
 
     @staticmethod
     async def create_movie_entity(item: any, eq_id: str) -> MovieEntityV2:
-        now_time: str = TimeUtil.now()
-        actors = await Bilibili.fetch_actors(eq_id)
+        now_time: str = TimeUtil.now()  # 记录当前操作时间
+        actors = await Bilibili.fetch_actors(eq_id)  # 调用电影详情页来获取演员列表
         return MovieEntityV2(  # 构造MovieEntityV2数据
             _id=StringUtil.hash(item['title']),
             fixed_title=item['title'],
@@ -207,14 +215,14 @@ class Bilibili:
     @staticmethod
     async def raw_fetch_async(page: int,
                               retry_on_task_id: str = '') -> list[MovieEntityV2]:
-        Bilibili.params['page'] = page - 1
+        Bilibili.params['page'] = page - 1  # page从0开始需要对索引减去1
         async with aiohttp.ClientSession() as session:
             async with session.get(Bilibili.base_url,
                                    params=Bilibili.params,
                                    headers=headers) as response:
                 if response.status == 200:
                     json_object = await response.json()
-                    # 写入到json
+                    # 写入到json中备份数据
                     push_file_dump_msg(Bilibili.platform, page, Bilibili.pagesize, json_object, retry_on_task_id)
                     return await Bilibili.handle_data(json_object)
         return []
@@ -233,6 +241,7 @@ class Bilibili:
 
 # 腾讯数据源 ~ 通过控制反转注入到任务容器 min_page 1 total 4980
 @inject
+@checkpoint_rollback
 class Tencent:
     max_tasks: int = 166
     pagesize: int = 30
@@ -359,6 +368,7 @@ class Tencent:
 
 # 爱奇艺数据源 ~ 通过控制反转注入到任务容器 min_page 1 total 780
 @inject
+@checkpoint_rollback
 class IQiYi:
     max_tasks: int = 13
     pagesize: int = 60
@@ -426,6 +436,7 @@ class IQiYi:
 
 # 优酷数据源 ~ 注入到任务容器 min_page 1 total 4920
 @inject
+@checkpoint_rollback
 class YouKu:
     max_tasks: int = 82
     pagesize: int = 60
@@ -536,6 +547,7 @@ class YouKu:
 
 # 芒果数据源 ~ 注入到任务容器 min_page 1 total 2400
 @inject
+@checkpoint_rollback
 class MgTV:
     max_tasks: int = 40
     pagesize: int = 60
