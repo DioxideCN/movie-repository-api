@@ -6,13 +6,12 @@ from typing import Callable, Awaitable
 
 import aiohttp
 from lxml import etree
-from motor.motor_asyncio import AsyncIOMotorCollection
 
 from movie_repository.util.logger import logger
 from movie_repository.entity.entity_movie import MovieEntityV2, PlatformDetail
-from .init_config import write_in, json_file
+from .init_config import push_file_dump_msg, json_file, push_db_insert_msg
 from .warmup import WarmupHandler, Status, generate_key
-from movie_repository.util.default_util import StringUtil, TimeUtil, MongoUtil
+from movie_repository.util.default_util import StringUtil, TimeUtil
 
 # 全局注册器
 _task_run_registry = []
@@ -49,20 +48,20 @@ async def execute_tasks(platform_tasks, log_message):
 
 
 async def run_all(warmup: WarmupHandler,
-                  collection: AsyncIOMotorCollection,
                   total: int):
     platforms: dict[str, Platform] = {name: Platform(name) for name in json_file}
     for cls in _task_run_registry:
         batches = math.ceil(total / cls.pagesize)
-        for page in range(1, batches + 1):
-            task = cls.run_async(warmup, collection, page)
+        if cls.max_tasks and cls.max_tasks < batches:
+            batches = cls.max_tasks
+        for page in range(1, batches + 1):  # scope [1, batches + 1)
+            task = cls.run_async(warmup, page)
             platforms[cls.__name__.lower()].tasks.append(task)
     await execute_tasks(platforms,
                         f'Gathering {len(_task_run_registry)} running-type task(s): {_task_run_registry}')
 
 
 async def rollback_all(warmup: WarmupHandler,
-                       collection: AsyncIOMotorCollection,
                        rollback_trace: dict[str, dict[str, int]]):
     platforms: dict[str, Platform] = {name: Platform(name) for name in json_file}
     for cls in _rollback_run_registry:
@@ -71,7 +70,7 @@ async def rollback_all(warmup: WarmupHandler,
             for task_id in rollback_trace[key]:
                 # 从检点开始重试
                 batch: int = rollback_trace[key][task_id]
-                task = cls.run_async(warmup, collection, batch, task_id)
+                task = cls.run_async(warmup, batch, task_id)
                 platforms[cls.__name__.lower()].tasks.append(task)
     await execute_tasks(platforms,
                         f'Gathering {len(_rollback_run_registry)} rollback-type task(s): {_rollback_run_registry}')
@@ -98,7 +97,6 @@ def filter_strings(strings: [str]) -> [str]:
 
 
 async def abstract_run_with_checkpoint(platform: str,
-                                       collection: AsyncIOMotorCollection,
                                        page: int,
                                        pagesize: int,
                                        warmup: WarmupHandler,
@@ -111,25 +109,15 @@ async def abstract_run_with_checkpoint(platform: str,
     warmup.put_batch_trace(task_id=unique_batch_id, source=platform,
                            batch=page, pagesize=pagesize, status=Status.PENDING,
                            begin=batch_begin_time)
-    batch_results = await async_func()  # 执行lambda
+    batch_results: list[MovieEntityV2] = await async_func()  # 执行lambda
+    push_db_insert_msg(batch_results)
     warmup.put_batch_trace(task_id=unique_batch_id, source=platform,
                            batch=page, pagesize=pagesize, status=Status.FINISHED,
                            begin=batch_begin_time, end=TimeUtil.now())
-    # 生成 DB Task ID
-    unique_db_id: str = retry_on_task_id if retry_on_task_id.startswith('DB.TASK') else generate_key('DB.TASK')
-    db_begin_time: str = TimeUtil.now()
-    warmup.put_db_trace(task_id=unique_db_id, platform=platform,
-                        batch=page, pagesize=pagesize, status=Status.PENDING,
-                        begin=db_begin_time)
-    logger.info(f"(Batch {page}*{pagesize}) Staring inserting List(MovieEntityV2) from '{platform}' into MongoDB.")
-    await MongoUtil.batch_put(collection, batch_results)
-    warmup.put_db_trace(task_id=unique_db_id, platform=platform,
-                        batch=page, pagesize=pagesize, status=Status.FINISHED,
-                        begin=db_begin_time, end=TimeUtil.now())
 
 
 # B站数据源 ~ 通过控制反转注入到任务容器 0
-
+@inject
 class Bilibili:
     pagesize: int = 60
     platform: str = 'bilibili'
@@ -168,7 +156,7 @@ class Bilibili:
                             raise Exception(f"{err} status code: ", response.status)
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 if attempt < retries - 1:  # 如果不是最后一次尝试，则等待后重试
-                    await asyncio.sleep(2 ** attempt)  # 指数退避策略
+                    await asyncio.sleep(2**attempt)  # 指数退避策略
                 else:  # 最后一次尝试仍然失败，可以选择抛出异常或者其他错误处理
                     err = f"Failed to fetch actors after several retries at platform {Bilibili.platform} ep_id {ep_id}."
                     logger.error(err)
@@ -181,18 +169,17 @@ class Bilibili:
             data_film_data = raw_film_data['data']
             if 'list' in data_film_data:
                 film_data = data_film_data['list']
-                tasks = []
-                for item in film_data:  # 遍历JSON结果转换为MovieEntity对象
+                for item in film_data:  # 顺序处理每个项目并添加延迟
                     eq_id = str(item['first_ep']['ep_id'])
-                    tasks.append(Bilibili.create_movie_entity(item, eq_id))
-                movie_list = await asyncio.gather(*tasks)
+                    movie = await Bilibili.create_movie_entity(item, eq_id)
+                    movie_list.append(movie)
+                    await asyncio.sleep(10)  # 延迟阻塞退避风控
         return movie_list
 
     @staticmethod
     async def create_movie_entity(item: any, eq_id: str) -> MovieEntityV2:
         now_time: str = TimeUtil.now()
         actors = await Bilibili.fetch_actors(eq_id)
-        await asyncio.sleep(1)  # 当前页中的每个结果获取都阻塞1秒
         return MovieEntityV2(  # 构造MovieEntityV2数据
             _id=StringUtil.hash(item['title']),
             fixed_title=item['title'],
@@ -227,17 +214,15 @@ class Bilibili:
                 if response.status == 200:
                     json_object = await response.json()
                     # 写入到json
-                    write_in(Bilibili.platform, page, Bilibili.pagesize, json_object, retry_on_task_id)
+                    push_file_dump_msg(Bilibili.platform, page, Bilibili.pagesize, json_object, retry_on_task_id)
                     return await Bilibili.handle_data(json_object)
         return []
 
     @staticmethod
     async def run_async(warmup: WarmupHandler,
-                        collection: AsyncIOMotorCollection,
                         page: int,
                         retry_on_task_id: str = ''):
         await abstract_run_with_checkpoint(Bilibili.platform,
-                                           collection,
                                            page,
                                            Bilibili.pagesize,
                                            warmup,
@@ -292,7 +277,7 @@ class Tencent:
         async with session.post(Tencent.base_url, json=Tencent.payload) as response:
             response_text = await response.text()
             json_object = json.loads(response_text)
-            write_in(Tencent.platform, page, 30, json_object, retry_on_task_id)  # 缓存到json
+            push_file_dump_msg(Tencent.platform, page, 30, json_object, retry_on_task_id)  # 缓存到json
             if json_object["ret"] != 0:
                 err_msg: str = f"Error occurred when fetching movie data: {json_object['msg']}"
                 logger.error(err_msg)
@@ -301,30 +286,17 @@ class Tencent:
                 cards = json_object["data"]["CardList"][1]["children_list"]["list"]["cards"]
             except IndexError:
                 cards = json_object["data"]["CardList"][0]["children_list"]["list"]["cards"]
-            tasks = [
-                Tencent.get_movie_detail(session, item["params"]["cid"], item)
-                for item in cards
-            ]
-            tasks = [item for item in tasks if item is not None]
-            movie_entities = await asyncio.gather(*tasks)
-            result.extend(movie_entities)
+            for item in cards:
+                movie_detail = await Tencent.get_movie_detail(session, item["params"]["cid"], item)
+                result.append(movie_detail)
+                await asyncio.sleep(10)  # 延迟阻塞退避风控
         return result
 
     @staticmethod
     async def get_movie_detail(session: aiohttp.ClientSession, cid: str, item: dict[str, any]) -> MovieEntityV2:
         async with session.get(Tencent.cover_url.format(cid=cid)) as response:
-            logger.info(cid)
             response_text = await response.text()
-            try:
-                matches = re.findall(r"window\.__PINIA__=(.+)?</script>", response_text)[0]
-            except Exception:
-                response = await session.get(Tencent.cover_url.format(cid=cid))
-                response_text = await response.text()
-                try:
-                    matches = re.findall(r"window\.__PINIA__=(.+)?</script>", response_text)[0]
-                except Exception:
-                    return None
-
+            matches = re.findall(r"window\.__PINIA__=(.+)?</script>", response_text)[0]
             matches = (
                 matches.replace("undefined", "null")
                 .replace("Array.prototype.slice.call(", "")
@@ -360,7 +332,7 @@ class Tencent:
                     metadata={
                         'cid': cid,
                         'vid': cover_info["video_ids"][0],
-                        'area': item["params"].get("area_name", ""),
+                        'area': item["params"].get('area_name', '未知'),
                     }
                 )],
             )
@@ -369,15 +341,15 @@ class Tencent:
     async def raw_fetch_async(page: int,
                               retry_on_task_id: str = '') -> list[MovieEntityV2]:
         async with aiohttp.ClientSession() as session:
-            return await Tencent.get_movies(session, page, retry_on_task_id)
+            movies = await Tencent.get_movies(session, page, retry_on_task_id)
+            await asyncio.sleep(5)  # 添加延迟以避免触发风控
+            return movies
 
     @staticmethod
     async def run_async(warmup: WarmupHandler,
-                        collection: AsyncIOMotorCollection,
                         page: int,
                         retry_on_task_id: str = ''):
         await abstract_run_with_checkpoint(Tencent.platform,
-                                           collection,
                                            page,
                                            Tencent.pagesize,
                                            warmup,
@@ -386,9 +358,10 @@ class Tencent:
 
 
 # 爱奇艺数据源 ~ 通过控制反转注入到任务容器 1
-
+@inject
 class IQiYi:
-    pagesize: int = 24
+    max_tasks: int = 13
+    pagesize: int = 60
     platform: str = 'iqiyi'
     base_url = 'https://mesh.if.iqiyi.com/portal/lw/videolib/data'
     params: dict[str, str] = {
@@ -405,7 +378,7 @@ class IQiYi:
             async with session.get(IQiYi.base_url, params=IQiYi.params, headers=headers) as response:
                 json_object = await response.json()  # 直接获取JSON
                 # 缓存到json
-                write_in(IQiYi.platform, page, IQiYi.pagesize, json_object, retry_on_task_id)
+                push_file_dump_msg(IQiYi.platform, page, IQiYi.pagesize, json_object, retry_on_task_id)
                 result: list[MovieEntityV2] = []
                 results = json_object["data"]
                 now_time: str = TimeUtil.now()
@@ -441,13 +414,9 @@ class IQiYi:
 
     @staticmethod
     async def run_async(warmup: WarmupHandler,
-                        collection: AsyncIOMotorCollection,
                         page: int,
                         retry_on_task_id: str = ''):
-        if page >= 14:
-            return
         await abstract_run_with_checkpoint(IQiYi.platform,
-                                           collection,
                                            page,
                                            IQiYi.pagesize,
                                            warmup,
@@ -456,7 +425,7 @@ class IQiYi:
 
 
 # 优酷数据源 ~ 注入到任务容器 1
-
+@inject
 class YouKu:
     pagesize: int = 60
     platform: str = 'youku'
@@ -513,7 +482,6 @@ class YouKu:
                                     item['directors'].append(data["title"])
                                 else:
                                     item['actors'].append(data["title"])
-                await asyncio.sleep(10)  # 当前页中的每个结果获取都阻塞3秒
                 now_time: str = TimeUtil.now()
                 return MovieEntityV2(  # 添加数据到结果集
                     _id=StringUtil.hash(obj_data["title"]),
@@ -544,21 +512,20 @@ class YouKu:
             async with session.get(f'{YouKu.base_url}{page}') as response:
                 json_object = await response.json()
                 # 缓存到json
-                write_in(YouKu.platform, page, YouKu.pagesize, json_object, retry_on_task_id)
+                push_file_dump_msg(YouKu.platform, page, YouKu.pagesize, json_object, retry_on_task_id)
                 result: list[MovieEntityV2] = []
                 results = json_object["data"]["filterData"]["listData"]
                 for data in results:
                     fetch_res: MovieEntityV2 = await YouKu.get_movie_info(data)
                     result.append(fetch_res)
+                    await asyncio.sleep(10)
                 return result
 
     @staticmethod
     async def run_async(warmup: WarmupHandler,
-                        collection: AsyncIOMotorCollection,
                         page: int,
                         retry_on_task_id: str = ''):
         await abstract_run_with_checkpoint(YouKu.platform,
-                                           collection,
                                            page,
                                            YouKu.pagesize,
                                            warmup,
@@ -567,8 +534,9 @@ class YouKu:
 
 
 # 芒果数据源 ~ 注入到任务容器 1
-
+@inject
 class MgTV:
+    max_tasks: int = 40
     pagesize: int = 60
     platform: str = 'mgtv'
     base_url: str = 'https://pianku.api.mgtv.com/rider/list/pcweb/v3'
@@ -596,7 +564,7 @@ class MgTV:
             async with session.get(MgTV.base_url, params=MgTV.params) as response:
                 json_object = await response.json()  # 直接获取JSON
                 # 缓存到json
-                write_in(MgTV.platform, page, MgTV.pagesize, json_object, retry_on_task_id)
+                push_file_dump_msg(MgTV.platform, page, MgTV.pagesize, json_object, retry_on_task_id)
                 result: list[MovieEntityV2] = []
                 results = json_object['data']['hitDocs']
                 now_time: str = TimeUtil.now()
@@ -629,13 +597,9 @@ class MgTV:
 
     @staticmethod
     async def run_async(warmup: WarmupHandler,
-                        collection: AsyncIOMotorCollection,
                         page: int,
                         retry_on_task_id: str = ''):
-        if page >= 40:
-            return
         await abstract_run_with_checkpoint(MgTV.platform,
-                                           collection,
                                            page,
                                            MgTV.pagesize,
                                            warmup,

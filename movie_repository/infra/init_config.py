@@ -1,19 +1,34 @@
 import os
 
 import json
+from dataclasses import asdict, fields
+from typing import List
+
 from kafka import KafkaProducer, KafkaClient, KafkaConsumer
 
+from movie_repository.entity.entity_movie import MovieEntityV2
 from movie_repository.util.logger import logger
 
 kafka_host = 'localhost:9092'
 kafka_file_topic = 'file_updater_topic'
+kafka_db_topic = 'db_updater_topic'
 kafka_file_group = 'file_updater_group'
+kafka_db_group = 'db_updater_group'
 kafka_client: KafkaClient = KafkaClient(bootstrap_servers=kafka_host)
 kafka_producer: KafkaProducer = KafkaProducer(bootstrap_servers=kafka_host)
-kafka_consumer: KafkaConsumer = KafkaConsumer(kafka_file_topic,
-                                              bootstrap_servers=kafka_host,
-                                              group_id=kafka_file_group,
-                                              consumer_timeout_ms=1000)
+kafka_file_consumer: KafkaConsumer = KafkaConsumer(kafka_file_topic,
+                                                   bootstrap_servers=kafka_host,
+                                                   group_id=kafka_file_group,
+                                                   auto_offset_reset='earliest',
+                                                   enable_auto_commit=True,
+                                                   consumer_timeout_ms=1000)
+kafka_db_consumer: KafkaConsumer = KafkaConsumer(kafka_db_topic,
+                                                 bootstrap_servers=kafka_host,
+                                                 group_id=kafka_db_group,
+                                                 auto_offset_reset='earliest',
+                                                 enable_auto_commit=True,
+                                                 consumer_timeout_ms=1000)
+
 
 time_formatter: str = '%Y-%m-%d %H%M%S.%f'
 saves_directory = "saves"
@@ -40,14 +55,26 @@ async def init_configuration():
             os.makedirs(directory_path)
     # 初始化Kafka并尝试添加topic
     kafka_client.add_topic(kafka_file_topic)
+    kafka_client.add_topic(kafka_db_topic)
     kafka_client.close()
+    # 尝试消费掉上次没有消费的消息
+    counter = 0
+    for msg in kafka_file_consumer:
+        counter += 1
+    logger.info(f'(Kafka Lifecycle) Consumed {counter} message(s) in last kafka file topic.')
+    kafka_file_consumer.close()
+    counter = 0
+    for msg in kafka_db_consumer:
+        counter += 1
+    logger.info(f'(Kafka Lifecycle) Consumed {counter} message(s) in last kafka db topic.')
+    kafka_db_consumer.close()
 
 
-def write_in(file_name: str,
-             batch: int,
-             pagesize: int,
-             data_set: any,
-             retry_on_task_id: str = ''):
+def push_file_dump_msg(file_name: str,
+                       batch: int,
+                       pagesize: int,
+                       data_set: any,
+                       retry_on_task_id: str = ''):
     if file_name not in json_file:  # 不存在的目标文件
         err_msg = f"Cannot save data, platform '{file_name}' hasn't been included in system."
         logger.error(err_msg)
@@ -66,3 +93,16 @@ def write_in(file_name: str,
         "retry_on_task_id": retry_on_task_id
     })
     kafka_producer.send(kafka_file_topic, message.encode('utf-8'))
+
+
+def push_db_insert_msg(movies: List[MovieEntityV2]):
+    """
+    将新增的数据推送到kafka顺序消费
+    """
+    for movie in movies:
+        # 转换dataclass到dict，并移除不需要的字段
+        movie_dict = asdict(movie)
+        exclude_fields = {field.name for field in fields(movie) if field.metadata.get('exclude')}
+        for field in exclude_fields:
+            movie_dict.pop(field, None)
+        kafka_producer.send(kafka_db_topic, json.dumps(movie_dict).encode('utf-8'))

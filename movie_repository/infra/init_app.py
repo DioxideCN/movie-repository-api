@@ -2,7 +2,7 @@ import os
 
 from movie_repository.util.logger import logger
 from .init_config import init_configuration
-from .init_storage import init_database
+from .init_storage import init_database, collections
 
 TOTAL = int(os.getenv("total", "60"))
 
@@ -17,4 +17,4 @@ async def init_app():
     # Step2.初始化并载入mongodb
     logger.info('Initializing storage module embedded MongoDB client on port(s): 27017.')
     warmup = await init_database(TOTAL)
-    await warmup.save_to_file()
+    await warmup.finalizer(collections)
