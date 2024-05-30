@@ -1,8 +1,12 @@
+import json
+
 from fastapi import APIRouter, Query
 
+from api.entity.entity_movie import MovieEntityV2
 from api.entity.entity_response import Response, ResponseEnum, ResultModel
 from api.infra.init_storage import collections
 from api.util import logger
+from api.util.default_util import ObjectUtil
 
 router = APIRouter()
 
@@ -24,4 +28,5 @@ async def get_paginated_movies(page: int = 1, pagesize: int = 20) -> list[dict]:
     skip = (page - 1) * pagesize
     cursor = collections.find().skip(skip).limit(pagesize)
     movies = await cursor.to_list(length=pagesize)
+    print(ObjectUtil.mask(movies[0], MovieEntityV2))
     return movies

@@ -156,7 +156,7 @@ class Bilibili:
                             # 使用xpath定位到演员列表的dom元素上来获取innerText()值
                             div_texts = html.xpath("//div[contains(text(), '出演演员')]//text()")
                             return filter_strings(''.join(t.strip() for t in div_texts)
-                                                  .removeprefix('出演演员：').split('\n'))
+                                                  .removeprefix('出演演员：').split('\n')).split(' / ')
                         else:
                             err = f"Failed to fetch data at platform {Bilibili.platform} ep_id {ep_id}."
                             logger.error(err)
