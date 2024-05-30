@@ -34,8 +34,8 @@ resources/
 *.spec
 
 # ui
-ui/.next/*
-ui/node_modules/*
+ui/.next/
+ui/node_modules/
 ui/next-env.d.ts
 
 # Installer logs
