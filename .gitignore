@@ -33,6 +33,10 @@ resources/
 *.manifest
 *.spec
 
+# ui
+ui/.next
+ui/node_modules
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
