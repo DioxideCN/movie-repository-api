@@ -6,8 +6,8 @@ import {useEffect, useState} from "react";
 export default function Home() {
   const [movies, setMovies]: [MovieType[], any] = useState<MovieType[]>([]);
 
-  useEffect(() => {
-    const fetchMovies = async () => {
+  useEffect((): void => {
+    const fetchMovies = async (): Promise<void> => {
       try {
         const response = await fetch('http://localhost:8000/fetch/movies?page=1&pagesize=42');
         if (response.status >= 200 && response.status < 300) {
