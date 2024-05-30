@@ -1,44 +1,76 @@
-import json
+import asyncio
+import threading
 
 from kafka import KafkaConsumer, KafkaProducer
-from kafka.errors import KafkaError
+from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorClient
 
-kafka_host = 'localhost:9092'
+from api.entity.entity_movie import MovieEntityV2
+
+kafka_host = '127.0.0.1:9092'
 kafka_file_topic = 'file_updater_topic'
 kafka_file_group = 'file_updater_group'
 kafka_db_topic = 'db_updater_topic'
 kafka_db_group = 'db_updater_group'
 kafka_producer: KafkaProducer = KafkaProducer(bootstrap_servers=kafka_host)
-kafka_file_consumer: KafkaConsumer = KafkaConsumer(kafka_file_topic,
-                                                   bootstrap_servers=kafka_host,
-                                                   group_id=kafka_file_group,
-                                                   auto_offset_reset='earliest',
-                                                   enable_auto_commit=True,
-                                                   consumer_timeout_ms=1000)
-kafka_db_consumer: KafkaConsumer = KafkaConsumer(kafka_db_topic,
-                                                 bootstrap_servers=kafka_host,
-                                                 group_id=kafka_db_group,
-                                                 auto_offset_reset='earliest',
-                                                 enable_auto_commit=True,
-                                                 consumer_timeout_ms=1000)
+
+client = AsyncIOMotorClient("mongodb://localhost:27017/")  # 端
+db = client["movie_repository"]  # 库
+collections: AsyncIOMotorCollection = db[MovieEntityV2.collection]  # 表
+
+# kafka_producer.send(kafka_file_topic, json.dumps({"demo file": "demo"}).encode('utf-8'))
+# kafka_producer.send(kafka_file_topic, json.dumps({"demo file 1": "demo"}).encode('utf-8'))
+# kafka_producer.send(kafka_db_topic, json.dumps({"demo db": "demo1"}).encode('utf-8'))
+# kafka_producer.send(kafka_db_topic, json.dumps({"demo db 1": "demo1"}).encode('utf-8'))
+kafka_producer.flush()
+kafka_producer.close()
 
 
-# movie_dict = {'_id': 'cc7d7b82b3d5ed32261256c449539a3d1b318b37e3fae291ef0c45ca1361e185', 'create_time': '2024-05-29 15:46:00.793', 'update_time': '2024-05-29 15:46:00.793', 'fixed_title': '只是一次偶然的旅行', 'platform_detail': [{'source': 'mgtv', 'title': '只是一次偶然的旅行', 'cover_url': 'https://2img.hitv.com/preview/sp_images/2020/12/23/20201223104222045.jpg', 'create_time': '2024-05-29 15:46:00.793', 'directors': [], 'actors': ['窦靖童', '贺开朗'], 'release_date': '2021', 'description': '女孩（窦靖童饰）独自来到拉萨旅行，而一只被供奉的“五彩神虾”意外改变了她的所有计划。女孩决定独自驾车穿越半个中国将神虾送归大海。一路上，她遇到了形色各异的人和事，回忆、梦境与幻觉也断续涌现在她眼前。最终，放虾之旅以意想不到的方式落幕，女孩也抵达了她内心最隐秘的世界。', 'score': 0.0, 'movie_type': ['剧情', '文艺', '公路'], 'metadata': {'clip_id': '356373', 'views': '602581', 'update_time': '2023-08-18 19:29:42'}}]}
-# future = kafka_producer.send(kafka_db_topic, json.dumps(movie_dict).encode('utf-8'))
-# try:
-#     record_metadata = future.get(timeout=10)
-#     print(f"Message sent to topic {record_metadata.topic} partition {record_metadata.partition} offset {record_metadata.offset}")
-# except KafkaError as e:
-#     print(f"Failed to send message: {e}")
+# 独立的消费逻辑
+async def consume_file_messages():
+    kafka_file_consumer = KafkaConsumer(
+        kafka_file_topic,
+        bootstrap_servers=kafka_host,
+        group_id=kafka_file_group,
+        auto_offset_reset='earliest',
+        enable_auto_commit=False,
+        consumer_timeout_ms=5000  # 增加超时时间
+    )
+    for msg in kafka_file_consumer:
+        print(msg)
+        kafka_file_consumer.commit()
+        print(msg.offset)
+    kafka_file_consumer.close()
 
-# counter = 0
-# for msg in kafka_file_consumer:
-#     counter += 1
-# print(f'consume {counter} file messages')
-# kafka_file_consumer.close()
-#
-counter = 0
-for msg in kafka_db_consumer:
-    counter += 1
-print(f'consume {counter} db messages')
-kafka_db_consumer.close()
+
+async def consume_db_messages():
+    kafka_db_consumer = KafkaConsumer(
+        kafka_db_topic,
+        bootstrap_servers=kafka_host,
+        group_id=kafka_db_group,
+        auto_offset_reset='earliest',
+        enable_auto_commit=False,
+        consumer_timeout_ms=5000  # 增加超时时间
+    )
+    for msg in kafka_db_consumer:
+        print(msg)
+        kafka_db_consumer.commit()
+        print(msg.offset)
+    kafka_db_consumer.close()
+
+
+def run_asyncio_loop(asyncio_function):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(asyncio_function)
+    loop.close()
+
+
+# 启动线程来消费消息
+file_thread = threading.Thread(target=run_asyncio_loop, args=(consume_file_messages(),))
+db_thread = threading.Thread(target=run_asyncio_loop, args=(consume_db_messages(),))
+
+file_thread.start()
+db_thread.start()
+
+file_thread.join()
+db_thread.join()

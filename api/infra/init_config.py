@@ -4,36 +4,17 @@ import json
 from dataclasses import asdict, fields
 from typing import List
 
-from kafka import KafkaProducer, KafkaClient, KafkaConsumer
+from kafka import KafkaClient, KafkaProducer
 
 from api.entity.entity_movie import MovieEntityV2
 from api.util.logger import logger
 
-kafka_host = 'localhost:9092'
+kafka_host = '127.0.0.1:9092'
 kafka_file_topic = 'file_updater_topic'
 kafka_db_topic = 'db_updater_topic'
 kafka_file_group = 'file_updater_group'
 kafka_db_group = 'db_updater_group'
 kafka_client: KafkaClient = KafkaClient(bootstrap_servers=kafka_host)
-kafka_producer: KafkaProducer = KafkaProducer(bootstrap_servers=kafka_host)
-kafka_file_consumer: KafkaConsumer = KafkaConsumer(kafka_file_topic,
-                                                   bootstrap_servers=kafka_host,
-                                                   group_id=kafka_file_group,
-                                                   auto_offset_reset='earliest',
-                                                   enable_auto_commit=True,
-                                                   consumer_timeout_ms=1000,
-                                                   session_timeout_ms=30000,
-                                                   request_timeout_ms=305000,
-                                                   max_poll_interval_ms=300000)
-kafka_db_consumer: KafkaConsumer = KafkaConsumer(kafka_db_topic,
-                                                 bootstrap_servers=kafka_host,
-                                                 group_id=kafka_db_group,
-                                                 auto_offset_reset='earliest',
-                                                 enable_auto_commit=True,
-                                                 consumer_timeout_ms=1000,
-                                                 session_timeout_ms=30000,
-                                                 request_timeout_ms=305000,
-                                                 max_poll_interval_ms=300000)
 
 
 time_formatter: str = '%Y-%m-%d %H%M%S.%f'
@@ -63,9 +44,9 @@ async def init_configuration():
     kafka_client.add_topic(kafka_file_topic)
     kafka_client.add_topic(kafka_db_topic)
     kafka_client.close()
-    # 尝试消费掉上次没有消费的消息
-    consume_messages(kafka_file_consumer, kafka_file_topic)
-    consume_messages(kafka_db_consumer, kafka_db_topic)
+
+
+kafka_producer: KafkaProducer = KafkaProducer(bootstrap_servers=kafka_host)
 
 
 def push_file_dump_msg(file_name: str,

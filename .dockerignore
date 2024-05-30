@@ -1,6 +1,6 @@
 .venv
 tests
-saves
+resources/saves
 logs
 
 *.log

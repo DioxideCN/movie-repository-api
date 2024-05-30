@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import threading
+import time
 import uuid
 from collections import defaultdict
 from dataclasses import asdict
@@ -15,7 +17,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection
 from api.entity import WarmupData
 from api.infra import fetch
 from api.infra.init_config import saves_path, kafka_db_topic, \
-    kafka_host, kafka_db_group, kafka_file_topic, kafka_file_group
+    kafka_host, kafka_db_group, kafka_file_topic, kafka_file_group, kafka_producer
 from api.util import logger
 from api.util.default_util import TimeUtil
 
@@ -24,6 +26,13 @@ class Status(str, Enum):
     PENDING = "PENDING"
     FINISHED = "FINISHED"
     ERROR = "ERROR"
+
+
+def run_asyncio_loop(asyncio_function):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(asyncio_function)
+    loop.close()
 
 
 def generate_key(prefix: str = 'TASK') -> str:
@@ -98,10 +107,14 @@ class WarmupHandler:
         """
         warmup最后处理器，用来消费kafka、写入数据库和存储文件
         """
-        await asyncio.gather(
-            self.consume_kafka_db_dump(collection),
-            self.consume_kafka_file_dump()
-        )
+        kafka_producer.flush()
+        kafka_producer.close()
+        file_thread = threading.Thread(target=run_asyncio_loop, args=(self.consume_kafka_db_dump(collection),))
+        db_thread = threading.Thread(target=run_asyncio_loop, args=(self.consume_kafka_file_dump(),))
+        file_thread.start()
+        db_thread.start()
+        file_thread.join()
+        db_thread.join()
         # 将内存中的 warmup_data 写入文件
         logger.info('Starting saving warmup resources into file.')
         with open(self.path, 'w', encoding='utf-8') as file:
@@ -117,8 +130,8 @@ class WarmupHandler:
                                                          bootstrap_servers=kafka_host,
                                                          group_id=kafka_db_group,
                                                          auto_offset_reset='earliest',
-                                                         enable_auto_commit=True,
-                                                         consumer_timeout_ms=1000)
+                                                         enable_auto_commit=False,
+                                                         consumer_timeout_ms=5000)
         counter = 0
         for msg in kafka_db_consumer:
             data = json.loads(msg.value.decode('utf-8'))
@@ -156,8 +169,10 @@ class WarmupHandler:
                 }],
                 upsert=True
             )
+            kafka_db_consumer.commit()
             counter += 1
         logger.info(f'Successfully saving {counter} record(s) into mongodb.')
+        time.sleep(5)
         logger.info('(Kafka Lifecycle) Closing Kafka DB Consumer.')
         kafka_db_consumer.close()
 
@@ -170,8 +185,8 @@ class WarmupHandler:
                                                            bootstrap_servers=kafka_host,
                                                            group_id=kafka_file_group,
                                                            auto_offset_reset='earliest',
-                                                           enable_auto_commit=True,
-                                                           consumer_timeout_ms=1000)
+                                                           enable_auto_commit=False,
+                                                           consumer_timeout_ms=5000)
         counter = 0
         for msg in kafka_file_consumer:
             data = json.loads(msg.value.decode('utf-8'))
@@ -194,8 +209,10 @@ class WarmupHandler:
             self.put_file_trace(task_id=file_task_id, directory=file_name,
                                 batch=batch, pagesize=pagesize, status=Status.FINISHED,
                                 begin=file_begin_time, end=TimeUtil.now())
+            kafka_file_consumer.commit()
             counter += 1
         logger.info(f"Successfully saving {counter} json file(s) into 'saves'.")
+        time.sleep(5)
         logger.info('(Kafka Lifecycle) Closing Kafka File Consumer.')
         kafka_file_consumer.close()
 

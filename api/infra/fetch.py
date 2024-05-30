@@ -16,7 +16,11 @@ from api.util.default_util import StringUtil, TimeUtil
 # 全局注册器
 _task_run_registry = []
 _rollback_run_registry = []
-_rick_control_timeout = 8
+_rick_control_timeout = 10
+
+
+def risk_back_trace(retry_count: int) -> int:
+    return retry_count * _rick_control_timeout // 2 + _rick_control_timeout
 
 
 class Platform:
@@ -154,20 +158,21 @@ class Bilibili:
                             response_text = await response.text()
                             html = etree.HTML(response_text)
                             # 使用xpath定位到演员列表的dom元素上来获取innerText()值
-                            div_texts = html.xpath("//div[contains(text(), '出演演员')]//text()")
+                            div_texts: str = html.xpath("//div[contains(text(), '出演演员')]//text()")
                             return filter_strings(''.join(t.strip() for t in div_texts)
-                                                  .removeprefix('出演演员：').split('\n')).split(' / ')
+                                                  .removeprefix('出演演员：')
+                                                  .split('\n'))
                         else:
                             err = f"Failed to fetch data at platform {Bilibili.platform} ep_id {ep_id}."
                             logger.error(err)
                             raise Exception(f"{err} status code: ", response.status)
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except Exception:
                 if attempt < retries - 1:  # 如果不是最后一次尝试，则等待后重试
-                    await asyncio.sleep(2**attempt)  # 指数退避策略
+                    await asyncio.sleep(risk_back_trace(retries))  # 退避策略
                 else:  # 最后一次尝试仍然失败，可以选择抛出异常或者其他错误处理
                     err = f"Failed to fetch actors after several retries at platform {Bilibili.platform} ep_id {ep_id}."
                     logger.error(err)
-                    raise Exception(err) from e
+                    return []
 
     @staticmethod
     async def handle_data(raw_film_data: any) -> list[MovieEntityV2]:
@@ -299,53 +304,67 @@ class Tencent:
                 cards = json_object["data"]["CardList"][0]["children_list"]["list"]["cards"]
             for item in cards:
                 movie_detail = await Tencent.get_movie_detail(session, item["params"]["cid"], item)
-                result.append(movie_detail)
+                if movie_detail is not None:
+                    result.append(movie_detail)
                 await asyncio.sleep(_rick_control_timeout)  # 延迟阻塞退避风控
         return result
 
     @staticmethod
-    async def get_movie_detail(session: aiohttp.ClientSession, cid: str, item: dict[str, any]) -> MovieEntityV2:
-        async with session.get(Tencent.cover_url.format(cid=cid)) as response:
-            response_text = await response.text()
-            matches = re.findall(r"window\.__PINIA__=(.+)?</script>", response_text)[0]
-            matches = (
-                matches.replace("undefined", "null")
-                .replace("Array.prototype.slice.call(", "")
-                .replace("})", "}")
-            )
-            json_object: any = json.loads(matches)
-            actor_list: list[any] = json_object["introduction"]["starData"]["list"]
+    async def get_movie_detail(session: aiohttp.ClientSession, cid: str, item: dict[str, any]) \
+            -> MovieEntityV2 | None:
+        retries = 3  # 设置重试次数
+        for attempt in range(retries):
             try:
-                score = safe_float_conversion(json.loads(
-                    json_object['introduction']['introData']['list'][0]['item_params']['imgtag_ver']
-                )['tag_4']['text'].removesuffix('分'))
-            except KeyError:
-                score = -1.0
-            global_data: any = json_object["global"]
-            cover_info: any = global_data["coverInfo"]
-            now_time: str = TimeUtil.now()
-            return MovieEntityV2(  # 添加数据到结果集
-                _id=StringUtil.hash(item["params"]["title"]),
-                fixed_title=item["params"]["title"],
-                create_time=now_time,
-                update_time=now_time,
-                platform_detail=[PlatformDetail(
-                    source=Tencent.platform,
-                    title=item["params"]["title"],
-                    cover_url=cover_info["new_pic_vt"],
-                    create_time=now_time,
-                    description=cover_info["description"],
-                    score=score,
-                    actors=[star["star_name"] for star in actor_list],
-                    movie_type=[item["params"]["main_genre"]],
-                    release_date=item['params'].get('epsode_pubtime', ''),
-                    metadata={
-                        'cid': cid,
-                        'vid': cover_info["video_ids"][0],
-                        'area': item["params"].get('area_name', '未知'),
-                    }
-                )],
-            )
+                async with session.get(Tencent.cover_url.format(cid=cid)) as response:
+                    response_text = await response.text()
+                    # 这里会出现无法被具体异常类型捕获的异常，若发生需要重试
+                    pattern = r"window\.__PINIA__=(.+)?</script>"
+                    matches = re.findall(pattern, response_text)[0]
+                    matches = (
+                        matches.replace("undefined", "null")
+                        .replace("Array.prototype.slice.call(", "")
+                        .replace("})", "}")
+                    )
+                    json_object: any = json.loads(matches)
+                    actor_list: list[any] = json_object["introduction"]["starData"]["list"]
+                    try:
+                        score = safe_float_conversion(json.loads(
+                            json_object['introduction']['introData']['list'][0]['item_params']['imgtag_ver']
+                        )['tag_4']['text'].removesuffix('分'))
+                    except KeyError:
+                        score = -1.0
+                    global_data: any = json_object["global"]
+                    cover_info: any = global_data["coverInfo"]
+                    now_time: str = TimeUtil.now()
+                    return MovieEntityV2(  # 添加数据到结果集
+                        _id=StringUtil.hash(item["params"]["title"]),
+                        fixed_title=item["params"]["title"],
+                        create_time=now_time,
+                        update_time=now_time,
+                        platform_detail=[PlatformDetail(
+                            source=Tencent.platform,
+                            title=item["params"]["title"],
+                            cover_url=cover_info["new_pic_vt"],
+                            create_time=now_time,
+                            description=cover_info["description"],
+                            score=score,
+                            actors=[star["star_name"] for star in actor_list],
+                            movie_type=[item["params"]["main_genre"]],
+                            release_date=item['params'].get('epsode_pubtime', ''),
+                            metadata={
+                                'cid': cid,
+                                'vid': cover_info["video_ids"][0],
+                                'area': item["params"].get('area_name', '未知'),
+                            }
+                        )],
+                    )
+            except Exception:
+                if attempt < retries - 1:
+                    await asyncio.sleep(risk_back_trace(retries))
+                else:  # 最后一次尝试仍然失败，可以选择抛出异常或者其他错误处理
+                    err = f"Failed to fetch detail after several retries at platform {Tencent.platform} cid {cid}."
+                    logger.error(err)
+                    return None
 
     @staticmethod
     async def raw_fetch_async(page: int,
@@ -454,68 +473,78 @@ class YouKu:
     }
 
     @staticmethod
-    async def get_movie_info(obj_data: any):
-        async with aiohttp.ClientSession() as session:
-            async with session.get('https:' + obj_data["videoLink"]) as response:
-                html = await response.text()
-                j = re.findall(r"__INITIAL_DATA__ =(.+)?;<", html)[0]
-                json_object = json.loads(j)
-                root_data = json_object["data"]["data"]
-                root_nodes = json_object["data"]["model"]["detail"]["data"]["nodes"]
-                item = {
-                    'intro': '',
-                    'release_date': '',
-                    'cover_url': '',
-                    'score': -1.0,
-                    'movie_type': [],
-                    'directors': [],
-                    'actors': []
-                }
-                if root_data["type"] == 10001:
-                    item['release_date'] = root_data["data"]["extra"]["showReleaseTime"]  # 发布日期
-                for node in root_nodes:
-                    if not node["type"] == 10001:
-                        continue
-                    sub_nodes = node["nodes"]
-                    for sub_node in sub_nodes:
-                        if not sub_node["type"] == 20009:
-                            continue
-                        child_nodes = sub_node["nodes"]
-                        for child_node in child_nodes:
-                            if child_node["type"] == 20010:
-                                data = child_node["data"]
-                                item['cover_url'] = data["showImgV"]
-                                item['score'] = safe_float_conversion(data.get('score', ''))
-                                item['movie_type'] = data["introSubTitle"]
-                                item['intro'] = data["desc"]
-                            elif child_node["type"] == 10011:
-                                data = child_node["data"]
-                                if "导演" in data["subtitle"]:
-                                    item['directors'].append(data["title"])
-                                else:
-                                    item['actors'].append(data["title"])
-                now_time: str = TimeUtil.now()
-                return MovieEntityV2(  # 添加数据到结果集
-                    _id=StringUtil.hash(obj_data["title"]),
-                    fixed_title=obj_data["title"],
-                    create_time=now_time,
-                    update_time=now_time,
-                    platform_detail=[PlatformDetail(
-                        source=YouKu.platform,
-                        title=obj_data["title"],
-                        cover_url=item['cover_url'],
-                        create_time=now_time,
-                        description=item['intro'],
-                        score=item['score'],
-                        directors=item['directors'],
-                        actors=item['actors'],
-                        movie_type=item['movie_type'],
-                        release_date=item['release_date'],
-                        metadata={
-                            'summary': obj_data
+    async def get_movie_info(obj_data: any) -> MovieEntityV2 | None:
+        retries = 3  # 设置重试次数
+        for attempt in range(retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get('https:' + obj_data["videoLink"]) as response:
+                        html = await response.text()
+                        j = re.findall(r"__INITIAL_DATA__ =(.+)?;<", html)[0]
+                        json_object = json.loads(j)
+                        root_data = json_object["data"]["data"]
+                        root_nodes = json_object["data"]["model"]["detail"]["data"]["nodes"]
+                        item = {
+                            'intro': '',
+                            'release_date': '',
+                            'cover_url': '',
+                            'score': -1.0,
+                            'movie_type': [],
+                            'directors': [],
+                            'actors': []
                         }
-                    )],
-                )
+                        if root_data["type"] == 10001:
+                            item['release_date'] = root_data["data"]["extra"]["showReleaseTime"]  # 发布日期
+                        for node in root_nodes:
+                            if not node["type"] == 10001:
+                                continue
+                            sub_nodes = node["nodes"]
+                            for sub_node in sub_nodes:
+                                if not sub_node["type"] == 20009:
+                                    continue
+                                child_nodes = sub_node["nodes"]
+                                for child_node in child_nodes:
+                                    if child_node["type"] == 20010:
+                                        data = child_node["data"]
+                                        item['cover_url'] = data["showImgV"]
+                                        item['score'] = safe_float_conversion(data.get('score', ''))
+                                        item['movie_type'] = data["introSubTitle"]
+                                        item['intro'] = data["desc"]
+                                    elif child_node["type"] == 10011:
+                                        data = child_node["data"]
+                                        if "导演" in data["subtitle"]:
+                                            item['directors'].append(data["title"])
+                                        else:
+                                            item['actors'].append(data["title"])
+                        now_time: str = TimeUtil.now()
+                        return MovieEntityV2(  # 添加数据到结果集
+                            _id=StringUtil.hash(obj_data["title"]),
+                            fixed_title=obj_data["title"],
+                            create_time=now_time,
+                            update_time=now_time,
+                            platform_detail=[PlatformDetail(
+                                source=YouKu.platform,
+                                title=obj_data["title"],
+                                cover_url=item['cover_url'],
+                                create_time=now_time,
+                                description=item['intro'],
+                                score=item['score'],
+                                directors=item['directors'],
+                                actors=item['actors'],
+                                movie_type=item['movie_type'],
+                                release_date=item['release_date'],
+                                metadata={
+                                    'summary': obj_data
+                                }
+                            )],
+                        )
+            except Exception:
+                if attempt < retries - 1:
+                    await asyncio.sleep(risk_back_trace(retries))
+                else:  # 最后一次尝试仍然失败，可以选择抛出异常或者其他错误处理
+                    err = f"Failed to fetch info after several retries at platform {YouKu.platform}."
+                    logger.error(err)
+                    return None
 
     @staticmethod
     async def raw_fetch_async(page: int = 1,
@@ -529,7 +558,8 @@ class YouKu:
                 results = json_object["data"]["filterData"]["listData"]
                 for data in results:
                     fetch_res: MovieEntityV2 = await YouKu.get_movie_info(data)
-                    result.append(fetch_res)
+                    if fetch_res is not None:
+                        result.append(fetch_res)
                     await asyncio.sleep(_rick_control_timeout)
                 return result
 
