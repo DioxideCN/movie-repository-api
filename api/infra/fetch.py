@@ -121,7 +121,7 @@ async def abstract_run_with_checkpoint(platform: str,
                            begin=batch_begin_time, end=TimeUtil.now())
 
 
-# B站数据源 ~ 通过控制反转注入到任务容器 min_page 0 total 5520
+# B站数据源 ~ 通过控制反转注入到任务容器 min_page 0 total 5520 1020
 @inject
 @checkpoint_rollback
 class Bilibili:
@@ -244,7 +244,7 @@ class Bilibili:
                                            retry_on_task_id)
 
 
-# 腾讯数据源 ~ 通过控制反转注入到任务容器 min_page 1 total 4980
+# 腾讯数据源 ~ 通过控制反转注入到任务容器 min_page 1 total 4980 1020
 @inject
 @checkpoint_rollback
 class Tencent:
