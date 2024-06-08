@@ -20,8 +20,14 @@ body {
     margin-top: 8px;
     font-weight: 500;
     color: hsl(215 19% 98%);
+    overflow: hidden;
     text-overflow: ellipsis;
     user-select: none;
+    transition: color .2s ease;
+
+    &:hover {
+        color: #fb7299;
+    }
 }
 
 .text-subtitle {
@@ -33,6 +39,56 @@ body {
     height: 16px;
     line-height: 16px;
     margin: 2px 0 0;
+    user-select: none;
+}
+
+.text-score {
+    color: #e1e1e1;
+    width: 100%;
+    font-size: 20px;
+    font-weight: bold;
+    font-style: italic;
+    padding: 2px 6px;
+    text-align: right;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, .5));
+    user-select: none;
+}
+
+.movie-modal_ {
+    &not-display { display: none; }
+    &content { padding: 0!important; }
+
+    &area {
+        margin-bottom: 8px;
+
+        &--selector {
+            padding: 8px 20px;
+            background-color: #181818;
+            color: hsl(215 19% 90% / 80%);
+            transition: color .2s ease;
+
+            &:hover { color: #fff; }
+            &.active { color: #fff; cursor: default; }
+        }
+    }
+
+    &body{
+        background-color: #181818;
+        box-shadow: rgba(0, 0, 0, 0.75) 0 3px 10px;
+        -webkit-box-shadow: rgba(0, 0, 0, 0.75) 0 3px 10px;
+
+        &--right {
+            h2 {
+                font-size: large;
+            }
+            .intro {
+                color: hsl(215 19% 90% / 80%);
+                span {
+                    color: #fff;
+                }
+            }
+        }
+    }
 }
 
 ::-webkit-scrollbar-track
